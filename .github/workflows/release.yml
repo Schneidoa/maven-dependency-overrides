@@ -137,12 +137,17 @@ jobs:
       # old shape and would otherwise re-release those same notes under the next version.
       # A no-op when the changelog wasn't patched - create-pull-request opens nothing
       # when the tree is unchanged.
+      # Checks out develop itself, not the pull request branch: create-pull-request
+      # creates that branch from HEAD on its own, and finding it already checked out
+      # sends it looking for an origin/changelog/vX.Y.Z that does not exist yet
+      # ("fatal: ambiguous argument"). HEAD has to sit on develop so the PR carries
+      # only the changelog, not everything main has that develop doesn't.
       - name: Sync the changelog back to develop
         run: |
           set -euo pipefail
           cp CHANGELOG.md "$RUNNER_TEMP/CHANGELOG.md"
           git fetch origin develop
-          git checkout -B "changelog/v$VERSION" origin/develop
+          git checkout -B develop origin/develop
           cp "$RUNNER_TEMP/CHANGELOG.md" CHANGELOG.md
 
       - name: Open the changelog pull request

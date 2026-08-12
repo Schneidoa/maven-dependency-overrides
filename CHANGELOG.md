@@ -2,7 +2,9 @@
 
 # Maven-dependency-overrides Changelog
 
-## [Unreleased]
+## Unreleased
+
+## 0.0.1 - 2026-08-12
 
 First release, so this describes the plugin as a whole rather than changes
 against a version anyone has seen.
