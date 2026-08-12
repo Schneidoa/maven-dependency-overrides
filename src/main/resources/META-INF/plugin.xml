@@ -1,0 +1,100 @@
+<!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
+<idea-plugin>
+    <id>cloud.schneidoa.maven-dependency-overrides</id>
+    <name>Maven Dependency Overrides</name>
+    <!-- The URL is the source repository rather than schneidoa.cloud on purpose: the Marketplace
+         approval guidelines require the vendor website to be valid and functional, and that domain
+         currently fails the TLS handshake outright (plain HTTP answers 403). Switch it back once
+         the domain serves HTTPS - the repository link stays useful either way. -->
+    <vendor url="https://github.com/Schneidoa/maven-dependency-overrides"
+            email="daniel@schneidoa.de">Daniel Schneider</vendor>
+
+    <description><![CDATA[
+        <p>
+          Detects Maven <code>&lt;dependencyManagement&gt;</code> version overrides that have become stale
+          because an imported BOM chain has caught up &mdash; the typical case is a version manually pinned
+          ahead of a CVE fix that Spring Boot's own dependency management later provides at or above the
+          pinned version.
+        </p>
+
+        <h3>What it does</h3>
+        <ul>
+          <li>
+            Compares each pinned version against what the BOM chain actually manages it at, and warns
+            directly in the editor, as a weak warning on the <code>&lt;version&gt;</code> tag, on the
+            two cases worth acting on: a pin the BOM has exactly caught up to (now redundant) and a
+            pin sitting <em>below</em> the BOM's own version (holding the dependency back). A pin still
+            raising the version above the BOM stays silent &mdash; it's still doing its job. Quick fixes
+            remove the override once it's no longer needed, or suppress the warning with a shared
+            marker comment.
+          </li>
+          <li>
+            Provides a <em>Maven Overrides</em> tool window that lists every detected override across
+            all <code>pom.xml</code> files in the project in one table, with a Status column, add /
+            edit / remove actions, and click-to-navigate to the exact <code>&lt;version&gt;</code> tag.
+          </li>
+          <li>
+            Shows the full parent-chain path from the module down to the BOM that actually manages
+            the version (e.g. <code>spring-boot-starter-parent &rarr; spring-boot-dependencies &rarr;
+            jackson-bom:2.21.2</code>) &mdash; not just the bare BOM name, which is often something
+            the developer never wrote themselves.
+          </li>
+          <li>
+            From the tool window's context menu, <em>Show BOM Chain</em> opens the complete chain for
+            a row: every BOM consulted in precedence order, the one whose version actually applies,
+            the ones that don't manage the dependency, and the ones that couldn't be read from the
+            local repository. Where an unreadable BOM outranks the one that would otherwise win, the
+            chain says the answer isn't known rather than naming a winner it can't vouch for &mdash;
+            which is exactly what an <em>inconclusive</em> verdict is telling you. <em>Analyze
+            Dependencies</em> hands the artifact off to IntelliJ's own Maven Dependency Analyzer to
+            see what pulls it in.
+          </li>
+          <li>
+            Adding an override is guided: the tool window's <em>+ Add</em> action offers separate
+            Group ID and Artifact ID fields, each backed by what the target module's BOM chain
+            actually manages, with type-to-filter and a browsable dropdown. The version field
+            prefills from what's already managed, alongside a live note on what the version you
+            type would mean &mdash; redundant, above the BOM, below it, or not comparable.
+          </li>
+        </ul>
+
+        <h3>How it decides</h3>
+        <p>
+          Detection is local-only: it reads whatever BOM POMs are already in your local Maven
+          repository. When a BOM in the chain can't be resolved there, the override is reported as
+          <em>inconclusive</em> instead of confirmed, and no "safe to remove" quick fix is offered
+          &mdash; a wrong "safe to remove" recommendation could silently reintroduce a patched CVE.
+        </p>
+
+        <h3>Requirements</h3>
+        <p>
+          IntelliJ IDEA (Community or Ultimate) with the bundled Maven support enabled. Any BOMs
+          involved in the check must be present in the local Maven repository (i.e. the project has
+          been imported at least once).
+        </p>
+    ]]></description>
+
+    <depends>com.intellij.java</depends>
+    <depends>org.jetbrains.idea.maven</depends>
+
+    <resource-bundle>messages.MavenOverridesBundle</resource-bundle>
+
+    <!-- Extensions defined by the plugin.
+         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- The icon= path is the Classic-UI (13x13) variant. Under the New UI the platform swaps in
+             icons/expui/toolwindow/mavenOverrides.svg (16x16, plus the @20x20 stripe variant) via the
+             mapping declared below; _dark.svg siblings are picked up by naming convention. -->
+        <toolWindow id="MavenOverrides" factoryClass="cloud.schneidoa.ui.OverrideOverviewToolWindowFactory"
+                    icon="/icons/toolWindowMavenOverrides.svg"/>
+        <iconMapper mappingFile="MavenOverridesIconMappings.json"/>
+        <localInspection implementationClass="cloud.schneidoa.detection.OverrideInspection"
+                          language="XML"
+                          displayName="Maven dependency override is redundant or behind its BOM"
+                          groupName="Maven"
+                          shortName="MavenDependencyOverride"
+                          enabledByDefault="true"
+                          level="WARNING"/>
+    </extensions>
+
+</idea-plugin>

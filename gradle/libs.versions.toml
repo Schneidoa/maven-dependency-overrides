@@ -1,0 +1,8 @@
+[versions]
+junit = "4.13.2"
+mavenModelBuilder = "3.9.9"
+
+[libraries]
+junit = { module = "junit:junit", version.ref = "junit" }
+maven-artifact = { module = "org.apache.maven:maven-artifact", version.ref = "mavenModelBuilder" }
+maven-model-builder = { module = "org.apache.maven:maven-model-builder", version.ref = "mavenModelBuilder" }

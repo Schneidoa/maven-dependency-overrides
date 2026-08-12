@@ -1,0 +1,161 @@
+name: Release
+
+# main is the release branch: whatever lands here is what gets published. Day-to-day
+# work happens on develop and is built by build.yml.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Never cancel a release mid-flight. A cancelled run can leave the Marketplace upload
+# done but the tag unset, and the next run would then try to publish the same version
+# again - which the Marketplace rejects.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write # push the tag, create the GitHub Release
+  pull-requests: write # open the changelog PR against develop
+
+jobs:
+  # Split out from the release job so that a main push which doesn't bump the version
+  # shows up as a skipped release, rather than a green run that quietly did nothing.
+  check-version:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      unreleased: ${{ steps.resolve.outputs.unreleased }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags are the record of what has already been released
+
+      - name: Resolve version and check the tag
+        id: resolve
+        run: |
+          set -euo pipefail
+          version=$(sed -nE 's/^version[[:space:]]*=[[:space:]]*(.+)$/\1/p' gradle.properties | tr -d '[:space:]')
+          if [ -z "$version" ]; then
+            echo "::error file=gradle.properties::No version property found"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/v$version" > /dev/null; then
+            echo "unreleased=false" >> "$GITHUB_OUTPUT"
+            echo "\`v$version\` is already tagged — nothing to release. Bump \`version\` in \`gradle.properties\` on develop to cut a new one." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "unreleased=true" >> "$GITHUB_OUTPUT"
+            echo "Releasing \`$version\`." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  release:
+    name: Publish
+    needs: check-version
+    if: needs.check-version.outputs.unreleased == 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.check-version.outputs.version }}
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Cache Plugin Verifier downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.pluginVerifier
+          key: plugin-verifier-${{ runner.os }}-${{ hashFiles('build.gradle.kts', 'gradle.properties') }}
+          restore-keys: plugin-verifier-${{ runner.os }}-
+
+      # Before the build, so the change notes baked into the plugin come from a real
+      # [x.y.z] section instead of the [Unreleased] fallback. Skipped when the section
+      # was already written by hand - patching then would produce a second one.
+      - name: Patch changelog
+        run: |
+          set -euo pipefail
+          # Both header shapes on purpose: a hand-written section keeps the Keep a Changelog
+          # brackets ("## [0.3.0]"), while patchChangelog's own output drops them
+          # ("## 0.3.0 - 2026-08-12"). Matching only one form would patch an already
+          # patched changelog and leave two sections for the same version.
+          if grep -qE "^## \[?${VERSION//./\\.}\]?( |$)" CHANGELOG.md; then
+            echo "CHANGELOG.md already has a $VERSION section — leaving it alone."
+          else
+            ./gradlew patchChangelog
+          fi
+
+      # The same gate build.yml applies to develop. Publishing something that hasn't
+      # passed verifyPlugin would just move the rejection to the Marketplace review.
+      - name: Test, build and verify
+        run: ./gradlew check buildPlugin verifyPlugin
+
+      - name: Publish to JetBrains Marketplace
+        env:
+          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+        run: ./gradlew publishPlugin
+
+      # Only after a successful upload: the tag is what stops the next main push from
+      # attempting the same release, so it must not exist unless the release happened.
+      - name: Tag the release
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "v$VERSION"
+          git push origin "v$VERSION"
+
+      - name: Extract release notes
+        run: ./gradlew getChangelog --no-header --console=plain -q > build/release-notes.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Same rule the Marketplace channel follows: a suffixed version is a pre-release.
+          prerelease=""
+          case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "v$VERSION" build/distributions/*.zip \
+            --title "v$VERSION" \
+            --notes-file build/release-notes.md \
+            $prerelease
+
+      # patchChangelog rewrote [Unreleased] into [x.y.z] on main; develop still has the
+      # old shape and would otherwise re-release those same notes under the next version.
+      # A no-op when the changelog wasn't patched - create-pull-request opens nothing
+      # when the tree is unchanged.
+      - name: Sync the changelog back to develop
+        run: |
+          set -euo pipefail
+          cp CHANGELOG.md "$RUNNER_TEMP/CHANGELOG.md"
+          git fetch origin develop
+          git checkout -B "changelog/v$VERSION" origin/develop
+          cp "$RUNNER_TEMP/CHANGELOG.md" CHANGELOG.md
+
+      - name: Open the changelog pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          base: develop
+          branch: changelog/v${{ env.VERSION }}
+          title: "Carry the v${{ env.VERSION }} changelog back to develop"
+          body: |
+            `patchChangelog` renamed `[Unreleased]` to `[${{ env.VERSION }}]` while releasing
+            v${{ env.VERSION }}. Without this, develop keeps the old `[Unreleased]` block and the
+            next release would publish those notes a second time.
+
+            Opened automatically by [`release.yml`](../blob/main/.github/workflows/release.yml).
+          commit-message: "Carry the v${{ env.VERSION }} changelog back to develop"
+          delete-branch: true

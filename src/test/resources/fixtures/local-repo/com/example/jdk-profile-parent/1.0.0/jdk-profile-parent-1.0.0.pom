@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.example</groupId>
+    <artifactId>jdk-profile-parent</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+
+    <!--
+      Mirrors org.apache:apache's real "jdk9+" profile, which is what
+      breaks BomEffectiveModelResolver against the real Spring Boot BOM
+      chain: activation-by-JDK-version requires the model builder to know
+      the current JDK version, which needs system properties on the
+      ModelBuildingRequest.
+    -->
+    <profiles>
+        <profile>
+            <id>jdk9+</id>
+            <activation>
+                <jdk>[9,)</jdk>
+            </activation>
+        </profile>
+    </profiles>
+</project>

@@ -1,0 +1,9 @@
+{
+  "icons": {
+    "expui": {
+      "toolwindow": {
+        "mavenOverrides.svg": "icons/toolWindowMavenOverrides.svg"
+      }
+    }
+  }
+}

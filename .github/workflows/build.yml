@@ -1,0 +1,77 @@
+name: Build
+
+# Development happens on develop; main is the release branch and is handled by
+# release.yml, which runs this same gate itself before publishing. Pull requests
+# are covered so a merge into main is never the first time the change is built.
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+# A newer push to the same branch makes an in-flight run of it pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Test, build and verify
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      # The build pins no jvmToolchain, so it compiles against whatever JDK Gradle
+      # runs on. IntelliJ Platform 253 needs 21 - keep this in step with the local
+      # JDK rather than letting the runner's default decide.
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # The Plugin Verifier pulls the bundled plugins of the IDE it verifies against
+      # (~1 GB) into ~/.pluginVerifier, which is outside everything setup-gradle
+      # caches - the IDE distribution itself arrives as a Gradle dependency and is
+      # covered by that. A stale entry only costs a re-download of what's missing,
+      # so restore-keys matching loosely is the right trade here.
+      - name: Cache Plugin Verifier downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.pluginVerifier
+          key: plugin-verifier-${{ runner.os }}-${{ hashFiles('build.gradle.kts', 'gradle.properties') }}
+          restore-keys: plugin-verifier-${{ runner.os }}-
+
+      # One invocation, so Gradle can schedule the three across its own task graph.
+      # verifyPlugin is the gate that matters: it fails the build on internal API
+      # usage, which is also what the JetBrains Marketplace review rejects on.
+      - name: Test, build and verify
+        run: ./gradlew check buildPlugin verifyPlugin
+
+      - name: Upload plugin distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-distribution
+          path: build/distributions/*.zip
+          if-no-files-found: error
+
+      # Only on failure: the reports are the reason the run went red, and a green run
+      # has nothing in them worth the storage.
+      - name: Upload reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-reports
+          path: |
+            build/reports/
+            build/test-results/
+          if-no-files-found: ignore

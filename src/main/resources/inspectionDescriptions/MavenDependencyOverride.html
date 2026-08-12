@@ -1,0 +1,45 @@
+<html>
+<body>
+Reports <code>&lt;dependencyManagement&gt;</code> version overrides that an imported BOM chain has
+caught up with, and ones that hold a dependency below the version the BOM already provides.
+
+<p>
+  The typical case is a version pinned by hand ahead of a CVE fix, which the project's own
+  dependency management &mdash; Spring Boot's BOM, for instance &mdash; later shipped at the same
+  version or newer. The pin has become redundant, but nothing points that out, so it stays in the
+  POM and quietly holds the dependency back at the next upgrade.
+</p>
+
+<p>Example, with <code>spring-boot-dependencies</code> managing Jackson at <code>2.21.2</code>:</p>
+<pre><code>
+  &lt;dependencyManagement&gt;
+    &lt;dependencies&gt;
+      &lt;dependency&gt;
+        &lt;groupId&gt;com.fasterxml.jackson.core&lt;/groupId&gt;
+        &lt;artifactId&gt;jackson-databind&lt;/artifactId&gt;
+        &lt;version&gt;2.21.2&lt;/version&gt; &lt;!-- reported: the BOM manages this exact version --&gt;
+      &lt;/dependency&gt;
+    &lt;/dependencies&gt;
+  &lt;/dependencyManagement&gt;
+</code></pre>
+
+<p>
+  An override that still raises the version <i>above</i> what the BOM chain provides is not
+  reported: the pin is doing its job. Neither is one whose version cannot be ordered against the
+  BOM's at all, such as an unresolved property or a version range. Both remain visible in the
+  <b>Maven Overrides</b> tool window, which lists every override rather than only the ones worth
+  acting on.
+</p>
+
+<p>
+  Detection reads BOM POMs from the local Maven repository and never goes to the network. When a
+  BOM in the chain is missing there, the override is reported as inconclusive and no removal fix is
+  offered &mdash; a wrong "safe to remove" suggestion could silently reintroduce a patched CVE.
+</p>
+
+<p>
+  Use <b>Remove dependency override</b> to delete the entry, or <b>Suppress this override
+  warning</b> to keep it and mark it with a comment so it is skipped from then on.
+</p>
+</body>
+</html>

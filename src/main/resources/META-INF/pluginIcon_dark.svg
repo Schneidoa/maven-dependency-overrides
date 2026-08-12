@@ -1,0 +1,12 @@
+<svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <!-- Version pin: the manually pinned <version> in <dependencyManagement>. -->
+    <g fill="#548AF7">
+        <rect x="4.5" y="2.5" width="19" height="4.6" rx="2.3"/>
+        <path d="M9.2 7.1h9.6l1.9 12.1a1.6 1.6 0 0 1-1.58 1.85H8.98A1.6 1.6 0 0 1 7.3 19.2L9.2 7.1Z"/>
+        <rect x="12.8" y="20.6" width="2.4" height="11.4" rx="1.2"/>
+    </g>
+    <!-- Check badge: the BOM chain has caught up, so the pin can go. -->
+    <circle cx="26.8" cy="28.8" r="9.2" fill="#4EA65A"/>
+    <path d="M22.6 28.9l3 3 5.4-6.2" stroke="#FFFFFF" stroke-width="2.6" stroke-linecap="round"
+          stroke-linejoin="round"/>
+</svg>
