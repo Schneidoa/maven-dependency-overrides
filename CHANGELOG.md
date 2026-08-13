@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+## 0.0.2 - 2026-08-13
+
 ### Changed
 
 - Compatibility moved to IntelliJ IDEA 2026.2 (build `262.*`); 2025.3 is no
