@@ -29,7 +29,11 @@ fun verdictOf(override: DetectedOverride): OverrideVerdict = when (override) {
 fun verdictLabel(override: DetectedOverride): String = when (override) {
     is DetectedOverride.Inconclusive -> {
         val count = override.uncheckedBoms.size
-        "Inconclusive ($count BOM${if (count == 1) "" else "s"} unchecked)"
+        // "POM", not "BOM": uncheckedBoms carries two kinds of thing since the parent-chain
+        // truncation fix - BOMs whose own POM could not be read, and parent POMs that ended
+        // the chain walk. Calling a missing parent a BOM sends the reader looking for a BOM
+        // in "Show BOM Chain" that isn't there, because the problem sits a level above.
+        "Inconclusive ($count POM${if (count == 1) "" else "s"} unchecked)"
     }
     is DetectedOverride.Confirmed -> when (override.relation) {
         VersionRelation.SAME -> "Redundant"
@@ -42,7 +46,7 @@ fun verdictLabel(override: DetectedOverride): String = when (override) {
 /** Full sentence, used as the column tooltip and as the inspection's problem description. */
 fun verdictExplanation(override: DetectedOverride): String = when (override) {
     is DetectedOverride.Inconclusive ->
-        "Cannot confirm whether this override is still needed - some BOMs could not be resolved locally, so removal isn't offered here"
+        "Cannot confirm whether this override is still needed - some POMs in the BOM chain could not be resolved locally, so removal isn't offered here"
     is DetectedOverride.Confirmed -> when (override.relation) {
         VersionRelation.SAME ->
             "${managedByChain(override)} already manages this at ${override.bomVersion} - this override can be removed"

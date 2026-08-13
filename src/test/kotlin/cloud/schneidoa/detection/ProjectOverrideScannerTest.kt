@@ -10,7 +10,7 @@ class ProjectOverrideScannerTest : BasePlatformTestCase() {
         val fixtureUrl = javaClass.classLoader.getResource("fixtures/local-repo")
             ?: error("Test fixture local-repo not found on classpath")
         val localRepositoryDir = File(fixtureUrl.toURI())
-        return ProjectOverrideScanner { OverrideDetector(BomVersionResolver(localRepositoryDir)) }
+        return ProjectOverrideScanner { _, onMissing -> OverrideDetector(BomVersionResolver(localRepositoryDir, onMissing)) }
     }
 
     fun `test finds overrides across multiple modules, tagged with their own module`() {

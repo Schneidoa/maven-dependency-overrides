@@ -19,7 +19,10 @@ sealed class BomModelResult {
  * it possible to ask "what would this BOM manage this artifact at" without
  * caring whether some consumer POM has locally overridden it.
  */
-class BomEffectiveModelResolver(private val localRepositoryDir: File) {
+class BomEffectiveModelResolver(
+    private val localRepositoryDir: File,
+    private val onMissingPom: (Gav) -> Unit = {}
+) {
 
     /**
      * Memoizes per resolver instance, which is what makes the cache safe rather than a
@@ -42,6 +45,12 @@ class BomEffectiveModelResolver(private val localRepositoryDir: File) {
      * `computeIfAbsent` because the build below never re-enters this method:
      * parents and nested imports are resolved by `LocalRepositoryModelResolver`,
      * which does not call back into it.
+     *
+     * Because a `Failure` is memoized, a BOM missing at the start of a fetch round is
+     * reported to [onMissingPom] once - not once per override that asks for it - which
+     * is why a caller running multiple fetch rounds (Task 4) must use a fresh resolver
+     * per round rather than reusing one across rounds, or later rounds would see no
+     * report at all for a BOM already known missing from the first round.
      */
     private val effectiveModels = ConcurrentHashMap<Gav, BomModelResult>()
 
@@ -51,12 +60,13 @@ class BomEffectiveModelResolver(private val localRepositoryDir: File) {
     private fun buildEffectiveModelUncached(bom: Gav): BomModelResult {
         val pomFile = bom.pomFileIn(localRepositoryDir)
         if (!pomFile.isFile) {
+            onMissingPom(bom)
             return BomModelResult.Failure(bom, "BOM POM not found in local repository: $pomFile")
         }
 
         val request = DefaultModelBuildingRequest()
         request.setPomFile(pomFile)
-        request.setModelResolver(LocalRepositoryModelResolver(localRepositoryDir))
+        request.setModelResolver(LocalRepositoryModelResolver(localRepositoryDir, onMissingPom))
         request.setValidationLevel(ModelBuildingRequest.VALIDATION_LEVEL_MINIMAL)
         request.setProcessPlugins(false)
         // Without this, profile activation that depends on the running JDK

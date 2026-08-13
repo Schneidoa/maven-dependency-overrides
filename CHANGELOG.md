@@ -4,6 +4,20 @@
 
 ## Unreleased
 
+### Added
+- BOM and parent POMs missing from the local Maven repository are now downloaded from the
+  remote repositories configured in `settings.xml` — mirrors, proxies and credentials
+  included — so the Override Overview, the Add/Edit dialogs and the BOM chain view can give
+  a verdict where they previously reported "inconclusive". The editor inspection stays
+  offline and unchanged.
+- Maven's "Work offline" setting is honored: nothing is downloaded, and the Override
+  Overview says so when it has inconclusive rows.
+
+### Fixed
+- A parent POM missing from the local repository silently ended the parent-chain walk,
+  which could drop an override from the report entirely or report it as unmanaged. Such a
+  chain is now reported as inconclusive.
+
 ## 0.0.2 - 2026-08-13
 
 ### Changed

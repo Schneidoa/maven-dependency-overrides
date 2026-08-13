@@ -25,7 +25,7 @@ class BomChainResolverTest : BasePlatformTestCase() {
 
         assertEquals(
             listOf(BomImport(Gav("com.example", "acme-bom", "1.0.0"), emptyList())),
-            chain
+            chain.imports
         )
     }
 
@@ -40,7 +40,7 @@ class BomChainResolverTest : BasePlatformTestCase() {
             """.trimIndent()
         )
 
-        assertTrue(resolver().resolveBomChain(model, project).isEmpty())
+        assertTrue(resolver().resolveBomChain(model, project).imports.isEmpty())
     }
 
     /**
@@ -70,7 +70,7 @@ class BomChainResolverTest : BasePlatformTestCase() {
 
         assertEquals(
             listOf(BomImport(Gav("com.example", "acme-bom", "${'$'}{acme.bom.version}"), emptyList())),
-            chain
+            chain.imports
         )
     }
 
@@ -135,7 +135,7 @@ class BomChainResolverTest : BasePlatformTestCase() {
                 BomImport(Gav("com.example", "acme-bom", "1.0.0"), emptyList()),
                 BomImport(Gav("com.example", "legacy-bom", "1.0.0"), listOf("parent"))
             ),
-            chain
+            chain.imports
         )
     }
 
@@ -200,7 +200,7 @@ class BomChainResolverTest : BasePlatformTestCase() {
                 BomImport(Gav("com.example", "shared-bom", "2.0.0"), emptyList()),
                 BomImport(Gav("com.example", "shared-bom", "1.0.0"), listOf("parent"))
             ),
-            chain
+            chain.imports
         )
     }
 
@@ -243,7 +243,7 @@ class BomChainResolverTest : BasePlatformTestCase() {
         val modelA = MavenDomUtil.getMavenDomProjectModel(project, fileA.virtualFile)!!
         val chain = resolver().resolveBomChain(modelA, project)
 
-        assertTrue(chain.isEmpty())
+        assertTrue(chain.imports.isEmpty())
     }
 
     fun `test skips file-based parent lookup when relativePath is present but empty, and falls back to repository`() {
@@ -311,7 +311,7 @@ class BomChainResolverTest : BasePlatformTestCase() {
         // the child's own import shows up.
         assertEquals(
             listOf(BomImport(Gav("com.example", "acme-bom", "1.0.0"), emptyList())),
-            chain
+            chain.imports
         )
     }
 
@@ -345,7 +345,7 @@ class BomChainResolverTest : BasePlatformTestCase() {
         // was reached via repository lookup, not a sibling file.
         assertEquals(
             listOf(BomImport(Gav("com.example", "legacy-bom", "1.0.0"), listOf("composing-bom"))),
-            chain
+            chain.imports
         )
     }
 
@@ -411,8 +411,86 @@ class BomChainResolverTest : BasePlatformTestCase() {
 
         assertEquals(
             listOf(BomImport(Gav("com.example", "legacy-bom", "1.0.0"), listOf("parent", "grandparent"))),
-            chain
+            chain.imports
         )
+    }
+
+    fun `test reports a parent that is not in the local repository instead of silently ending the chain`() {
+        val file = myFixture.configureByText(
+            "pom.xml",
+            """
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+                <modelVersion>4.0.0</modelVersion>
+                <parent>
+                    <groupId>com.example</groupId>
+                    <artifactId>absent-parent</artifactId>
+                    <version>7.7.7</version>
+                    <relativePath/>
+                </parent>
+                <artifactId>consumer</artifactId>
+            </project>
+            """.trimIndent()
+        )
+        val model = MavenDomUtil.getMavenDomProjectModel(project, file.virtualFile)!!
+
+        val chain = resolver().resolveBomChain(model, project)
+
+        assertEquals(listOf(Gav("com.example", "absent-parent", "7.7.7")), chain.truncatedAt)
+        assertTrue(chain.imports.isEmpty())
+    }
+
+    fun `test reports a parent whose POM is present but yields no model instead of silently ending the chain`() {
+        val file = myFixture.configureByText(
+            "pom.xml",
+            """
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+                <modelVersion>4.0.0</modelVersion>
+                <parent>
+                    <groupId>com.example</groupId>
+                    <artifactId>unreadable-parent</artifactId>
+                    <version>1.0.0</version>
+                    <relativePath/>
+                </parent>
+                <artifactId>consumer</artifactId>
+            </project>
+            """.trimIndent()
+        )
+        val model = MavenDomUtil.getMavenDomProjectModel(project, file.virtualFile)!!
+
+        val chain = resolver().resolveBomChain(model, project)
+
+        // The file is on disk but is not a POM (see the fixture's own comment). Left unreported,
+        // this ends the walk silently and detection can go on to report Confirmed - "safe to
+        // remove" - on a chain it never finished walking. RemotePomFetcher writing POMs into the
+        // repository makes a partially-written or error-bodied file a real possibility here.
+        assertEquals(listOf(Gav("com.example", "unreadable-parent", "1.0.0")), chain.truncatedAt)
+        assertTrue(chain.imports.isEmpty())
+    }
+
+    fun `test reports a parent whose coordinate is incomplete instead of silently ending the chain`() {
+        val file = myFixture.configureByText(
+            "pom.xml",
+            """
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+                <modelVersion>4.0.0</modelVersion>
+                <parent>
+                    <groupId>com.example</groupId>
+                    <artifactId>nameless-parent</artifactId>
+                    <relativePath/>
+                </parent>
+                <artifactId>consumer</artifactId>
+            </project>
+            """.trimIndent()
+        )
+        val model = MavenDomUtil.getMavenDomProjectModel(project, file.virtualFile)!!
+
+        val chain = resolver().resolveBomChain(model, project)
+
+        // No <version>, so there is no coordinate to look up or fetch - but the walk still ended
+        // early, which is the fact that must not be lost. The missing part is rendered as "?"
+        // rather than guessed, so the reported coordinate says exactly what the POM declared.
+        assertEquals(listOf(Gav("com.example", "nameless-parent", "?")), chain.truncatedAt)
+        assertTrue(chain.imports.isEmpty())
     }
 
     private fun resolver(): BomChainResolver {

@@ -45,11 +45,21 @@ sealed class BomChainEntry {
     ) : BomChainEntry()
 }
 
+/**
+ * [truncatedAt] carries [BomChain.truncatedAt] through to the dialog, and is the difference
+ * between explaining an Inconclusive verdict and contradicting it. Without it a module whose
+ * parent POM could not be read renders as an ordinary, complete chain - an empty entry list
+ * reading "no BOMs are imported", or a list of "does not manage this dependency" losers -
+ * while the tool-window row that opened the dialog says INCONCLUSIVE. Presenting a chain the
+ * walk never finished as if it were exhaustive is the same false-safe this plugin exists to
+ * avoid, so a renderer must say the walk stopped early and name what stopped it.
+ */
 data class BomChainReport(
     val ga: Ga,
     val declaredVersion: String,
     val moduleLabel: String,
-    val entries: List<BomChainEntry>
+    val entries: List<BomChainEntry>,
+    val truncatedAt: List<Gav> = emptyList()
 )
 
 /**
@@ -68,7 +78,8 @@ fun buildBomChainReport(
     declaredVersion: String,
     moduleLabel: String,
     bomChain: List<BomImport>,
-    resolver: BomVersionResolver
+    resolver: BomVersionResolver,
+    truncatedAt: List<Gav> = emptyList()
 ): BomChainReport {
     var winnerAlreadySeen = false
     var blockedByUnresolvable = false
@@ -97,5 +108,5 @@ fun buildBomChainReport(
         }
     }
 
-    return BomChainReport(ga, declaredVersion, moduleLabel, entries)
+    return BomChainReport(ga, declaredVersion, moduleLabel, entries, truncatedAt)
 }

@@ -31,19 +31,41 @@ private const val DEFAULT_RELATIVE_PARENT_PATH = "../pom.xml"
  */
 data class BomImport(val bom: Gav, val declaredVia: List<String>)
 
-class BomChainResolver(private val localRepositoryDir: File) {
+/**
+ * The BOM imports found while climbing the parent chain, plus every parent the walk could
+ * not get past - which matters because it means the walk stopped early and the imports
+ * list is therefore incomplete rather than exhaustive. A caller that ignores [truncatedAt]
+ * will read a short chain as a complete one and can report a confident "nothing manages
+ * this" for an artifact a BOM above the break manages.
+ *
+ * [truncatedAt] covers all three ways a parent can stop the walk: its POM is not in the
+ * local repository, its POM is there but yields no DOM model, and its <parent> element
+ * names no resolvable coordinate at all. The last of those has no real GAV, so it is
+ * recorded with "?" in place of whichever parts the POM did not declare.
+ */
+data class BomChain(val imports: List<BomImport>, val truncatedAt: List<Gav>)
 
-    fun resolveBomChain(model: MavenDomProjectModel, project: Project): List<BomImport> {
+class BomChainResolver(
+    private val localRepositoryDir: File,
+    private val onMissingPom: (Gav) -> Unit = {}
+) {
+
+    fun resolveBomChain(model: MavenDomProjectModel, project: Project): BomChain {
         val chain = mutableListOf<BomImport>()
+        val truncatedAt = mutableListOf<Gav>()
         var current: MavenDomProjectModel? = model
         var path: List<String> = emptyList()
         var depth = 0
 
+        // The depth cut-off is deliberately NOT recorded as a truncation. It only fires on a
+        // cyclic or absurdly deep <parent> chain, which is a POM Maven itself cannot build; the
+        // guard exists to stop, not to describe. Every truncation that can happen in a POM Maven
+        // would accept is reported through onTruncated below.
         while (current != null && depth < MAX_PARENT_CHAIN_DEPTH) {
             val declaredHere = path
             chain += importedBomsOf(current).map { BomImport(it, declaredHere) }
 
-            val parent = resolveParent(current, project)
+            val parent = resolveParent(current, project) { truncatedAt += it }
             if (parent != null) {
                 path = path + artifactIdOf(parent)
             }
@@ -51,7 +73,7 @@ class BomChainResolver(private val localRepositoryDir: File) {
             depth++
         }
 
-        return chain
+        return BomChain(chain, truncatedAt.toList())
     }
 
     private fun importedBomsOf(model: MavenDomProjectModel): List<Gav> {
@@ -89,12 +111,16 @@ class BomChainResolver(private val localRepositoryDir: File) {
      * to a local-repository GAV lookup whenever that doesn't produce a
      * result, mirroring real Maven's own two-stage parent resolution.
      */
-    private fun resolveParent(model: MavenDomProjectModel, project: Project): MavenDomProjectModel? {
+    private fun resolveParent(
+        model: MavenDomProjectModel,
+        project: Project,
+        onTruncated: (Gav) -> Unit
+    ): MavenDomProjectModel? {
         val parent = model.mavenParent
         if (parent.xmlTag == null) return null
 
         return resolveParentViaRelativePath(model, parent, project)
-            ?: resolveParentViaLocalRepository(parent, model, project)
+            ?: resolveParentViaLocalRepository(parent, model, project, onTruncated)
     }
 
     /**
@@ -137,16 +163,53 @@ class BomChainResolver(private val localRepositoryDir: File) {
     private fun resolveParentViaLocalRepository(
         parent: MavenDomParent,
         model: MavenDomProjectModel,
-        project: Project
+        project: Project,
+        onTruncated: (Gav) -> Unit
     ): MavenDomProjectModel? {
         val groupId = parent.groupId.rawText?.trim()
         val artifactId = parent.artifactId.rawText?.trim()
         val rawVersion = parent.version.rawText?.trim()
-        if (groupId.isNullOrEmpty() || artifactId.isNullOrEmpty() || rawVersion.isNullOrEmpty()) return null
+        if (groupId.isNullOrEmpty() || artifactId.isNullOrEmpty() || rawVersion.isNullOrEmpty()) {
+            // A <parent> element is present but does not name a resolvable coordinate, and
+            // relativePath resolution has already failed - so the walk ends here and the chain is
+            // not exhaustive. Reported through the same channel as a missing POM rather than a new
+            // one: truncatedAt is what makes detection go Inconclusive, and "we could not walk past
+            // this point" is exactly the same fact whether or not the point had a name. The unknown
+            // parts are rendered as "?" (the same placeholder artifactIdOf already uses) so the
+            // displayed coordinate says what is actually known instead of inventing one. Note this
+            // deliberately does NOT call onMissingPom: there is nothing concrete to download, and
+            // handing a "?" coordinate to RemotePomFetcher would be a guaranteed-404 request.
+            onTruncated(
+                Gav(
+                    groupId?.takeUnless { it.isEmpty() } ?: "?",
+                    artifactId?.takeUnless { it.isEmpty() } ?: "?",
+                    rawVersion?.takeUnless { it.isEmpty() } ?: "?"
+                )
+            )
+            return null
+        }
         val version = MavenPropertyResolver.resolve(rawVersion, model)
 
-        val pomFile = Gav(groupId, artifactId, version).pomFileIn(localRepositoryDir)
-        val virtualFile = LocalFileSystem.getInstance().findFileByIoFile(pomFile) ?: return null
-        return MavenDomUtil.getMavenDomProjectModel(project, virtualFile)
+        val gav = Gav(groupId, artifactId, version)
+        val pomFile = gav.pomFileIn(localRepositoryDir)
+        val virtualFile = LocalFileSystem.getInstance().findFileByIoFile(pomFile)
+        if (virtualFile == null) {
+            // Both callbacks fire and they are not the same thing: onMissingPom tells a fetch
+            // loop what to download, onTruncated tells the caller this chain is incomplete and
+            // must not be read as exhaustive. Fetching may fix the first without the second
+            // ever becoming untrue for this pass.
+            onMissingPom(gav)
+            onTruncated(gav)
+            return null
+        }
+        // The POM file exists but produced no DOM model - an unparseable, truncated or
+        // error-bodied file. This branch got *more* likely once RemotePomFetcher started writing
+        // POMs into the repository, and it is the worst kind of silent truncation: without
+        // onTruncated the chain reads as fully walked and detection can report Confirmed - i.e.
+        // "safe to remove" - on evidence it never actually gathered. Not routed through
+        // onMissingPom: the file is on disk, so a re-fetch loop would never converge.
+        val parentModel = MavenDomUtil.getMavenDomProjectModel(project, virtualFile)
+        if (parentModel == null) onTruncated(gav)
+        return parentModel
     }
 }

@@ -1,11 +1,14 @@
 package cloud.schneidoa.detection
 
+import cloud.schneidoa.resolver.BomVersionResolver
+import cloud.schneidoa.resolver.Gav
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.search.FilenameIndex
 import com.intellij.psi.search.GlobalSearchScope
 import org.jetbrains.idea.maven.dom.MavenDomUtil
 import org.jetbrains.idea.maven.dom.model.MavenDomProjectModel
+import org.jetbrains.idea.maven.project.MavenProjectsManager
 
 /**
  * One detected override, tagged with which module (pom.xml) it came from -
@@ -18,6 +21,12 @@ data class ProjectOverrideEntry(
     val override: DetectedOverride
 )
 
+/** Default factory, extracted so the constructor default stays readable. */
+private fun detectorFor(project: Project, onMissingPom: (Gav) -> Unit): OverrideDetector {
+    val localRepositoryDir = MavenProjectsManager.getInstance(project).repositoryPath.toFile()
+    return OverrideDetector(BomVersionResolver(localRepositoryDir, onMissingPom))
+}
+
 /**
  * Finds every pom.xml in the project via FilenameIndex rather than
  * MavenProjectsManager.projects - mirrors BomChainResolver's own choice to
@@ -25,10 +34,10 @@ data class ProjectOverrideEntry(
  * need a completed Maven import/sync to produce results.
  */
 class ProjectOverrideScanner(
-    private val detectorFactory: (Project) -> OverrideDetector = OverrideDetector::forProject
+    private val detectorFactory: (Project, (Gav) -> Unit) -> OverrideDetector = ::detectorFor
 ) {
-    fun scan(project: Project): List<ProjectOverrideEntry> {
-        val detector = detectorFactory(project)
+    fun scan(project: Project, onMissingPom: (Gav) -> Unit = {}): List<ProjectOverrideEntry> {
+        val detector = detectorFactory(project, onMissingPom)
         val pomFiles = FilenameIndex.getVirtualFilesByName("pom.xml", GlobalSearchScope.projectScope(project))
 
         return pomFiles

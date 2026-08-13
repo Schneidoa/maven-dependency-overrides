@@ -28,8 +28,25 @@ class BomChainDialog(project: Project, private val report: BomChainReport) : Dia
     override fun createCenterPanel(): JComponent {
         val root = DefaultMutableTreeNode("${report.ga} — declared ${report.declaredVersion} in ${report.moduleLabel}")
 
+        // The truncation notice goes first, above the entries, because it qualifies every one of
+        // them: BOMs above the break were never consulted, so neither an empty list nor a list of
+        // "does not manage this dependency" losers can be read as the whole story. Saying nothing
+        // here would make this dialog assert a complete chain to a user who opened it to find out
+        // why the row said Inconclusive - the same false-safe the Confirmed/Inconclusive split
+        // exists to prevent.
+        for (gav in report.truncatedAt) {
+            root.add(DefaultMutableTreeNode("The parent chain could not be walked past $gav — BOMs above it were not consulted"))
+        }
         if (report.entries.isEmpty()) {
-            root.add(DefaultMutableTreeNode("No BOMs are imported by this module or its parents"))
+            root.add(
+                DefaultMutableTreeNode(
+                    if (report.truncatedAt.isEmpty()) {
+                        "No BOMs are imported by this module or its parents"
+                    } else {
+                        "No BOMs were found in the part of the chain that could be walked"
+                    }
+                )
+            )
         }
         for (entry in report.entries) {
             root.add(nodeFor(entry))

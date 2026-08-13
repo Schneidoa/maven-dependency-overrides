@@ -119,4 +119,38 @@ class BomEffectiveModelResolverTest {
             .version
         assertEquals("2.13.0", jacksonVersion)
     }
+
+    /**
+     * The case that is invisible today: BomModelResult.Failure names broken-parent-bom, which
+     * IS on disk, while the POM actually missing is its parent. Without this seam a fetch loop
+     * would re-request an artifact it already has and never make progress.
+     */
+    @Test
+    fun `reports the missing parent coordinate, not the BOM that failed to build`() {
+        val reported = mutableListOf<Gav>()
+        val fixtureUrl = javaClass.classLoader.getResource("fixtures/local-repo")
+            ?: error("Test fixture local-repo not found on classpath")
+        val reporting = BomEffectiveModelResolver(File(fixtureUrl.toURI())) { reported += it }
+
+        val result = reporting.buildEffectiveModel(Gav("com.example", "broken-parent-bom", "1.0.0"))
+
+        assertTrue(result is BomModelResult.Failure)
+        assertTrue(
+            "expected the missing parent to be reported, got $reported",
+            reported.contains(Gav("com.example", "does-not-exist-parent", "1.0.0"))
+        )
+    }
+
+    @Test
+    fun `reports a BOM whose own POM is not in the repository`() {
+        val reported = mutableListOf<Gav>()
+        val fixtureUrl = javaClass.classLoader.getResource("fixtures/local-repo")
+            ?: error("Test fixture local-repo not found on classpath")
+        val reporting = BomEffectiveModelResolver(File(fixtureUrl.toURI())) { reported += it }
+        val missing = Gav("com.example", "does-not-exist-bom", "9.9.9")
+
+        reporting.buildEffectiveModel(missing)
+
+        assertEquals(listOf(missing), reported)
+    }
 }

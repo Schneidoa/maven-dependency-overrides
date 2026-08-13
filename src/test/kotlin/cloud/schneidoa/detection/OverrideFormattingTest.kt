@@ -108,7 +108,7 @@ class OverrideFormattingTest : BasePlatformTestCase() {
         assertFalse(explanation.contains("remove"))
     }
 
-    fun `test verdict label for an inconclusive override names the unchecked BOM count`() {
+    fun `test verdict label for an inconclusive override names the unchecked POM count`() {
         val file = myFixture.configureByText(
             "pom.xml",
             """
@@ -143,10 +143,10 @@ class OverrideFormattingTest : BasePlatformTestCase() {
         val inconclusive = detector.detect(model, project).single()
 
         assertEquals(OverrideVerdict.INCONCLUSIVE, verdictOf(inconclusive))
-        assertEquals("Inconclusive (1 BOM unchecked)", verdictLabel(inconclusive))
+        assertEquals("Inconclusive (1 POM unchecked)", verdictLabel(inconclusive))
     }
 
-    fun `test verdict label for an inconclusive override with two unchecked BOMs uses plural wording`() {
+    fun `test verdict label for an inconclusive override with two unchecked POMs uses plural wording`() {
         val file = myFixture.configureByText(
             "pom.xml",
             """
@@ -188,7 +188,7 @@ class OverrideFormattingTest : BasePlatformTestCase() {
         val inconclusive = detector.detect(model, project).single() as DetectedOverride.Inconclusive
 
         assertEquals(2, inconclusive.uncheckedBoms.size)
-        assertEquals("Inconclusive (2 BOMs unchecked)", verdictLabel(inconclusive))
+        assertEquals("Inconclusive (2 POMs unchecked)", verdictLabel(inconclusive))
     }
 
     fun `test verdict explanation for an inconclusive override does not suggest removal`() {

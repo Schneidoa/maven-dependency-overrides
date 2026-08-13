@@ -5,6 +5,7 @@ import cloud.schneidoa.resolver.Gav
 import cloud.schneidoa.resolver.ManagedVersionLookup
 import cloud.schneidoa.resolver.VersionRelation
 import cloud.schneidoa.resolver.compareDeclaredToManaged
+import cloud.schneidoa.resolver.uncheckedBoms
 import com.intellij.openapi.project.Project
 import org.jetbrains.idea.maven.dom.model.MavenDomProjectModel
 import org.jetbrains.idea.maven.project.MavenProjectsManager
@@ -44,7 +45,8 @@ val DetectedOverride.candidate: OverrideCandidate
 
 class OverrideDetector(private val bomVersionResolver: BomVersionResolver) {
 
-    private val bomChainResolver = BomChainResolver(bomVersionResolver.localRepositoryDir)
+    private val bomChainResolver =
+        BomChainResolver(bomVersionResolver.localRepositoryDir, bomVersionResolver.onMissingPom)
 
     fun detect(model: MavenDomProjectModel, project: Project): List<DetectedOverride> {
         val bomChain = bomChainResolver.resolveBomChain(model, project)
@@ -54,15 +56,21 @@ class OverrideDetector(private val bomVersionResolver: BomVersionResolver) {
             .mapNotNull { candidate -> evaluate(candidate, bomChain) }
     }
 
-    private fun evaluate(candidate: OverrideCandidate, bomChain: List<BomImport>): DetectedOverride? {
-        return when (val lookup = bomVersionResolver.resolveManagedVersion(bomChain.map { it.bom }, candidate.ga)) {
+    private fun evaluate(candidate: OverrideCandidate, bomChain: BomChain): DetectedOverride? {
+        val lookup = bomVersionResolver.resolveManagedVersion(bomChain.imports.map { it.bom }, candidate.ga)
+        // A parent we could not read is exactly as disqualifying as a BOM we could not read:
+        // both mean the chain we searched was not the whole chain.
+        val unchecked = lookup.uncheckedBoms() + bomChain.truncatedAt
+
+        return when (lookup) {
             is ManagedVersionLookup.Found ->
-                if (lookup.uncheckedBoms.isNotEmpty()) {
-                    DetectedOverride.Inconclusive(candidate, lookup.uncheckedBoms)
+                if (unchecked.isNotEmpty()) {
+                    DetectedOverride.Inconclusive(candidate, unchecked)
                 } else {
                     // Equal versions are reported too, not filtered out: a pin the BOM has
                     // exactly caught up to is the redundant one this plugin exists to find.
-                    val declaredVia = bomChain.firstOrNull { it.bom == lookup.declaredIn }?.declaredVia ?: emptyList()
+                    val declaredVia =
+                        bomChain.imports.firstOrNull { it.bom == lookup.declaredIn }?.declaredVia ?: emptyList()
                     DetectedOverride.Confirmed(
                         candidate,
                         lookup.version,
@@ -72,11 +80,7 @@ class OverrideDetector(private val bomVersionResolver: BomVersionResolver) {
                     )
                 }
             is ManagedVersionLookup.NotFound ->
-                if (lookup.uncheckedBoms.isNotEmpty()) {
-                    DetectedOverride.Inconclusive(candidate, lookup.uncheckedBoms)
-                } else {
-                    null
-                }
+                if (unchecked.isNotEmpty()) DetectedOverride.Inconclusive(candidate, unchecked) else null
         }
     }
 

@@ -319,6 +319,44 @@ class OverrideDetectorTest : BasePlatformTestCase() {
         assertEquals(listOf("parent"), confirmed.managedByChain)
     }
 
+    fun `test reports inconclusive when the parent chain could not be fully walked`() {
+        val file = myFixture.configureByText(
+            "pom.xml",
+            """
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+                <modelVersion>4.0.0</modelVersion>
+                <parent>
+                    <groupId>com.example</groupId>
+                    <artifactId>absent-parent</artifactId>
+                    <version>7.7.7</version>
+                    <relativePath/>
+                </parent>
+                <artifactId>consumer</artifactId>
+                <dependencyManagement>
+                    <dependencies>
+                        <dependency>
+                            <groupId>com.fasterxml.jackson.core</groupId>
+                            <artifactId>jackson-databind</artifactId>
+                            <version>2.15.0</version>
+                        </dependency>
+                    </dependencies>
+                </dependencyManagement>
+            </project>
+            """.trimIndent()
+        )
+        val model = MavenDomUtil.getMavenDomProjectModel(project, file.virtualFile)!!
+
+        val detected = OverrideDetector(BomVersionResolver(localRepositoryDir())).detect(model, project)
+
+        assertEquals(1, detected.size)
+        val result = detected.single()
+        assertTrue("expected Inconclusive, got $result", result is DetectedOverride.Inconclusive)
+        assertEquals(
+            listOf(Gav("com.example", "absent-parent", "7.7.7")),
+            (result as DetectedOverride.Inconclusive).uncheckedBoms
+        )
+    }
+
     private fun configureModuleImportingAcmeBom(dependencyManagementEntries: String): MavenDomProjectModel {
         val file = myFixture.configureByText(
             "pom.xml",

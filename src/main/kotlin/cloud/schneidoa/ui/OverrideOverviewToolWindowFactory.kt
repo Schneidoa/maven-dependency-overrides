@@ -9,6 +9,7 @@ import cloud.schneidoa.detection.candidate
 import cloud.schneidoa.detection.declaredToManaged
 import cloud.schneidoa.detection.managedByChain
 import cloud.schneidoa.detection.removeOverride
+import cloud.schneidoa.detection.resolvingMissingPoms
 import cloud.schneidoa.detection.verdictExplanation
 import cloud.schneidoa.detection.verdictLabel
 import cloud.schneidoa.detection.verdictOf
@@ -43,7 +44,9 @@ import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicInteger
+import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JPopupMenu
 import javax.swing.JTable
@@ -91,10 +94,12 @@ private class OverrideOverviewPanel(private val project: Project) {
         columnSelectionAllowed = false
         columnModel.getColumn(COLUMNS.lastIndex).cellRenderer = VerdictCellRenderer()
     }
+    private val offlineNotice = JLabel().apply { isVisible = false }
 
     val component: JPanel = JPanel(BorderLayout()).apply {
         add(createToolbar().component, BorderLayout.NORTH)
         add(JBScrollPane(table), BorderLayout.CENTER)
+        add(offlineNotice, BorderLayout.SOUTH)
     }
 
     init {
@@ -169,11 +174,19 @@ private class OverrideOverviewPanel(private val project: Project) {
         val generation = refreshGeneration.incrementAndGet()
         ApplicationManager.getApplication().executeOnPooledThread {
             val entries = try {
-                ReadAction.compute<List<ProjectOverrideEntry>, Throwable> { scanner.scan(project) }
+                resolvingMissingPoms(project) { onMissing -> scanner.scan(project, onMissing) }
+            } catch (e: CancellationException) {
+                // Must precede the broad catch. RemotePomFetcher deliberately rethrows cancellation
+                // rather than folding it into its "could not fetch" degradation; catching it here
+                // would undo that. ProcessCanceledException extends
+                // java.util.concurrent.CancellationException, so this covers a cancelled progress
+                // indicator and a closing project too - and logging one of those is the classic
+                // PCE-logging anti-pattern, not a failure worth a warning.
+                throw e
             } catch (e: Throwable) {
                 logger.warn("Failed to scan project for dependency overrides", e)
                 SwingUtilities.invokeLater {
-                    if (generation == refreshGeneration.get()) populate(emptyList(), emptyList())
+                    if (generation == refreshGeneration.get()) populate(emptyList(), emptyList(), false)
                 }
                 return@executeOnPooledThread
             }
@@ -190,15 +203,40 @@ private class OverrideOverviewPanel(private val project: Project) {
                 entries.map { false }
             }
 
+            // Scoped separately from both probes above for the same reason: a throw reading
+            // the offline setting must not discard an otherwise-successful scan, it should
+            // just leave the notice unable to explain itself and default to "online".
+            val offline = try {
+                MavenProjectsManager.getInstance(project).generalSettings.isWorkOffline
+            } catch (e: Throwable) {
+                logger.warn("Failed to read Maven offline setting", e)
+                false
+            }
+
             SwingUtilities.invokeLater {
-                if (generation == refreshGeneration.get()) populate(entries, syncedRows)
+                if (generation == refreshGeneration.get()) populate(entries, syncedRows, offline)
             }
         }
     }
 
-    private fun populate(entries: List<ProjectOverrideEntry>, syncedRows: List<Boolean>) {
+    private fun populate(
+        entries: List<ProjectOverrideEntry>,
+        syncedRows: List<Boolean>,
+        offline: Boolean
+    ) {
         currentEntries = entries
         mavenSyncedRows = syncedRows
+        // One message for the whole table rather than a per-row explanation: the cause is
+        // global (Maven's offline setting), and repeating it on every Inconclusive row would
+        // bury it rather than surface it. This is also why the reason is not threaded through
+        // DetectedOverride - every row would end up saying the same sentence.
+        val anyInconclusive = entries.any { verdictOf(it.override) == OverrideVerdict.INCONCLUSIVE }
+        offlineNotice.isVisible = offline && anyInconclusive
+        offlineNotice.text = if (offlineNotice.isVisible) {
+            "Maven is in offline mode - BOMs missing from the local repository were not downloaded."
+        } else {
+            ""
+        }
         tableModel.rowCount = 0
         for (entry in entries) {
             tableModel.addRow(
@@ -251,15 +289,19 @@ private class OverrideOverviewPanel(private val project: Project) {
     private fun showBomChain(entry: ProjectOverrideEntry) {
         ApplicationManager.getApplication().executeOnPooledThread {
             val report = try {
-                ReadAction.compute<BomChainReport?, Throwable> {
+                resolvingMissingPoms(project) { onMissing ->
                     buildBomChainReportFor(
                         project = project,
                         pomFile = entry.pomFile,
                         ga = entry.override.candidate.ga,
                         declaredVersion = entry.override.candidate.declaredVersion,
-                        moduleLabel = entry.moduleLabel
+                        moduleLabel = entry.moduleLabel,
+                        onMissingPom = onMissing
                     )
                 }
+            } catch (ex: CancellationException) {
+                // See refresh(): cancellation propagates instead of degrading to an error dialog.
+                throw ex
             } catch (ex: Throwable) {
                 logger.warn("Failed to build BOM chain report for ${entry.override.candidate.ga}", ex)
                 null

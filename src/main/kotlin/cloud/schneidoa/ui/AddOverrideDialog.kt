@@ -4,12 +4,13 @@ import cloud.schneidoa.detection.DependencyCandidates
 import cloud.schneidoa.detection.ManagedVersionHint
 import cloud.schneidoa.detection.addOverride
 import cloud.schneidoa.detection.dependencyEntryHint
+import cloud.schneidoa.detection.resolvingMissingPoms
 import cloud.schneidoa.resolver.Ga
+import cloud.schneidoa.resolver.Gav
 import cloud.schneidoa.resolver.ManagedVersionLookup
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
-import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComponentWithBrowseButton
 import com.intellij.openapi.ui.DialogWrapper
@@ -21,6 +22,7 @@ import com.intellij.ui.TextFieldWithAutoCompletion
 import com.intellij.util.ui.FormBuilder
 import org.jetbrains.idea.maven.dom.MavenDomUtil
 import org.jetbrains.idea.maven.dom.model.MavenDomProjectModel
+import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.JComboBox
 import javax.swing.JComponent
@@ -56,7 +58,7 @@ private class SimpleDocumentListener(private val onChange: () -> Unit) : Documen
 class AddOverrideDialog internal constructor(
     private val project: Project,
     modules: List<ModuleChoice>,
-    private val hintProvider: (Project) -> ManagedVersionHint = ManagedVersionHint::forProject
+    private val hintProvider: (Project, (Gav) -> Unit) -> ManagedVersionHint = ManagedVersionHint::forProject
 ) : DialogWrapper(project, true) {
 
     private val moduleCombo = JComboBox(modules.toTypedArray())
@@ -205,8 +207,8 @@ class AddOverrideDialog internal constructor(
         hintLabel.text = "Checking BOM..."
         ApplicationManager.getApplication().executeOnPooledThread {
             val text = try {
-                when (val lookup = ReadAction.compute<ManagedVersionLookup, Throwable> {
-                    hintProvider(project).lookup(choice.model, project, ga)
+                when (val lookup = resolvingMissingPoms(project) { onMissing ->
+                    hintProvider(project, onMissing).lookup(choice.model, project, ga)
                 }) {
                     is ManagedVersionLookup.Found ->
                         withUncheckedSuffix("Currently managed at ${lookup.version}", lookup.uncheckedBoms.size)
@@ -216,6 +218,14 @@ class AddOverrideDialog internal constructor(
                             lookup.uncheckedBoms.size
                         )
                 }
+            } catch (e: CancellationException) {
+                // Must precede the broad catch. RemotePomFetcher deliberately rethrows cancellation
+                // rather than folding it into its "could not fetch" degradation; catching it here
+                // would undo that, and a cancelled lookup is not a "Could not check BOM" answer -
+                // it is no answer. ProcessCanceledException extends
+                // java.util.concurrent.CancellationException, so this covers the platform's own
+                // cancellation too.
+                throw e
             } catch (e: Throwable) {
                 "Could not check BOM"
             }
@@ -253,9 +263,13 @@ class AddOverrideDialog internal constructor(
 
         ApplicationManager.getApplication().executeOnPooledThread {
             val loaded = try {
-                ReadAction.compute<DependencyCandidates?, Throwable> {
-                    DependencyCandidates(hintProvider(project).catalog(choice.model, project))
+                resolvingMissingPoms(project) { onMissing ->
+                    DependencyCandidates(hintProvider(project, onMissing).catalog(choice.model, project))
                 }
+            } catch (e: CancellationException) {
+                // See loadHint(): cancellation propagates instead of being reported as a failed
+                // candidate load, which would disable the pickers as if the chain were unreadable.
+                throw e
             } catch (e: Throwable) {
                 null
             }

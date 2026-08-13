@@ -2,16 +2,18 @@ package cloud.schneidoa.ui
 
 import cloud.schneidoa.detection.ManagedVersionHint
 import cloud.schneidoa.detection.OverrideCandidate
+import cloud.schneidoa.detection.resolvingMissingPoms
 import cloud.schneidoa.detection.setReason
 import cloud.schneidoa.detection.setVersion
+import cloud.schneidoa.resolver.Gav
 import cloud.schneidoa.resolver.ManagedVersionLookup
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.util.ui.FormBuilder
 import org.jetbrains.idea.maven.dom.model.MavenDomProjectModel
+import java.util.concurrent.CancellationException
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JTextField
@@ -23,7 +25,7 @@ class EditOverrideDialog(
     private val project: Project,
     private val model: MavenDomProjectModel,
     private val candidate: OverrideCandidate,
-    private val hintProvider: (Project) -> ManagedVersionHint = ManagedVersionHint::forProject
+    private val hintProvider: (Project, (Gav) -> Unit) -> ManagedVersionHint = ManagedVersionHint::forProject
 ) : DialogWrapper(project, true) {
 
     private val originalVersion = candidate.declaredVersion
@@ -74,12 +76,20 @@ class EditOverrideDialog(
     private fun loadHint() {
         ApplicationManager.getApplication().executeOnPooledThread {
             val text = try {
-                when (val lookup = ReadAction.compute<ManagedVersionLookup, Throwable> {
-                    hintProvider(project).lookup(model, project, candidate.ga)
+                when (val lookup = resolvingMissingPoms(project) { onMissing ->
+                    hintProvider(project, onMissing).lookup(model, project, candidate.ga)
                 }) {
                     is ManagedVersionLookup.Found -> "Currently managed at ${lookup.version}"
                     is ManagedVersionLookup.NotFound -> "Not currently managed by any BOM in this module's chain"
                 }
+            } catch (e: CancellationException) {
+                // Must precede the broad catch. RemotePomFetcher deliberately rethrows cancellation
+                // rather than folding it into its "could not fetch" degradation; catching it here
+                // would undo that, and a cancelled lookup is not a "Could not check BOM" answer -
+                // it is no answer. ProcessCanceledException extends
+                // java.util.concurrent.CancellationException, so this covers the platform's own
+                // cancellation too.
+                throw e
             } catch (e: Throwable) {
                 "Could not check BOM"
             }

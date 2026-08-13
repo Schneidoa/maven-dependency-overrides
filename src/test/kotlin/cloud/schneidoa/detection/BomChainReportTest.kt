@@ -102,6 +102,62 @@ class BomChainReportTest {
     }
 
     @Test
+    fun `a report over a fully walked chain records no truncation`() {
+        val report = buildBomChainReport(
+            ga = jacksonDatabind,
+            declaredVersion = "2.15.4",
+            moduleLabel = "test-module",
+            bomChain = listOf(BomImport(acmeBom, emptyList())),
+            resolver = BomVersionResolver(localRepositoryDir())
+        )
+
+        assertTrue(report.truncatedAt.isEmpty())
+    }
+
+    @Test
+    fun `a parent the chain walk could not get past is carried onto the report`() {
+        val unreadableParent = Gav("com.example", "absent-parent", "7.7.7")
+
+        val report = buildBomChainReport(
+            ga = jacksonDatabind,
+            declaredVersion = "2.15.4",
+            moduleLabel = "test-module",
+            bomChain = listOf(BomImport(acmeBom, emptyList())),
+            resolver = BomVersionResolver(localRepositoryDir()),
+            truncatedAt = listOf(unreadableParent)
+        )
+
+        assertEquals(
+            "A truncated parent walk must reach the dialog - otherwise it renders an incomplete " +
+                "chain as a complete one, contradicting the Inconclusive row that opened it",
+            listOf(unreadableParent),
+            report.truncatedAt
+        )
+    }
+
+    @Test
+    fun `an empty chain still reports the truncation that made it empty`() {
+        val unreadableParent = Gav("com.example", "absent-parent", "7.7.7")
+
+        val report = buildBomChainReport(
+            ga = jacksonDatabind,
+            declaredVersion = "2.15.4",
+            moduleLabel = "test-module",
+            bomChain = emptyList(),
+            resolver = BomVersionResolver(localRepositoryDir()),
+            truncatedAt = listOf(unreadableParent)
+        )
+
+        assertTrue(report.entries.isEmpty())
+        assertEquals(
+            "This is the case the dialog otherwise renders as \"no BOMs are imported\", which is " +
+                "actively misleading when the walk simply stopped before reaching any",
+            listOf(unreadableParent),
+            report.truncatedAt
+        )
+    }
+
+    @Test
     fun `moduleLabel is carried through onto the report`() {
         val report = buildBomChainReport(
             ga = jacksonDatabind,

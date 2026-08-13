@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Deliberately not a Maven POM. Well-formed XML with a non-project root element, so
+  MavenDomUtil.getMavenDomProjectModel finds the file but returns no DOM model.
+
+  This is the shape a repository proxy's error body takes once it has been written into
+  the local repository under a POM's name - a case RemotePomFetcher makes reachable, since
+  it writes POMs into ~/.m2 itself. BomChainResolver must report it as a truncation rather
+  than silently ending the parent walk.
+-->
+<error>
+    <status>404</status>
+    <message>Not Found</message>
+</error>

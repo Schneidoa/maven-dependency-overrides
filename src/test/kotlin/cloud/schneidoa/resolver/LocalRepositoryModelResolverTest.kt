@@ -74,4 +74,38 @@ class LocalRepositoryModelResolverTest {
         val source = copy.resolveModel("com.example", "acme-bom-parent", "1.0.0") as FileModelSource
         assertTrue(source.inputStream.bufferedReader().use { it.readText() }.contains("acme-bom-parent"))
     }
+
+    @Test
+    fun `reports the coordinates it could not find before throwing`() {
+        val reported = mutableListOf<Gav>()
+        val fixtureUrl = javaClass.classLoader.getResource("fixtures/local-repo")
+            ?: error("Test fixture local-repo not found on classpath")
+        val reporting = LocalRepositoryModelResolver(File(fixtureUrl.toURI())) { reported += it }
+
+        try {
+            reporting.resolveModel("com.example", "does-not-exist-bom", "9.9.9")
+            fail("Expected UnresolvableModelException")
+        } catch (e: UnresolvableModelException) {
+            // expected - the callback must fire in addition to, not instead of, the throw
+        }
+
+        assertEquals(listOf(Gav("com.example", "does-not-exist-bom", "9.9.9")), reported)
+    }
+
+    @Test
+    fun `newCopy carries the reporting callback`() {
+        val reported = mutableListOf<Gav>()
+        val fixtureUrl = javaClass.classLoader.getResource("fixtures/local-repo")
+            ?: error("Test fixture local-repo not found on classpath")
+        val copy = LocalRepositoryModelResolver(File(fixtureUrl.toURI())) { reported += it }.newCopy()
+
+        try {
+            copy.resolveModel("com.example", "does-not-exist-bom", "9.9.9")
+            fail("Expected UnresolvableModelException")
+        } catch (e: UnresolvableModelException) {
+            // expected
+        }
+
+        assertEquals(1, reported.size)
+    }
 }

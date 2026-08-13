@@ -12,11 +12,16 @@ import java.io.File
 /**
  * Resolves parent/import POM references purely against a local Maven
  * repository directory, following the standard repository layout. Never
- * touches the network — remote repositories declared in POMs are ignored,
- * since resolution here only concerns artifacts already present locally
- * (see design doc: core override detection must work offline).
+ * fetches anything itself — remote repositories declared in POMs are
+ * ignored, since resolution here only concerns artifacts already present
+ * locally (see design doc: core override detection must work offline) —
+ * but it reports what it could not find via [onMissingPom], so a caller
+ * outside the read action can fetch it.
  */
-class LocalRepositoryModelResolver(private val localRepositoryDir: File) : ModelResolver {
+class LocalRepositoryModelResolver(
+    private val localRepositoryDir: File,
+    private val onMissingPom: (Gav) -> Unit = {}
+) : ModelResolver {
 
     override fun resolveModel(groupId: String, artifactId: String, version: String): ModelSource =
         resolve(Gav(groupId, artifactId, version))
@@ -35,11 +40,16 @@ class LocalRepositoryModelResolver(private val localRepositoryDir: File) : Model
         // Intentionally a no-op, see class doc.
     }
 
-    override fun newCopy(): ModelResolver = LocalRepositoryModelResolver(localRepositoryDir)
+    override fun newCopy(): ModelResolver = LocalRepositoryModelResolver(localRepositoryDir, onMissingPom)
 
     private fun resolve(gav: Gav): ModelSource {
         val pomFile = gav.pomFileIn(localRepositoryDir)
         if (!pomFile.isFile) {
+            // Reported in addition to the throw, not instead of it: the model builder needs the
+            // exception to fail the build, while the caller needs the coordinate to know what to
+            // fetch. This is the only place that sees transitively-referenced parents and nested
+            // BOM imports by coordinate - BomModelResult.Failure names the outer BOM instead.
+            onMissingPom(gav)
             throw UnresolvableModelException(
                 "Could not find ${pomFile.name} in local repository $localRepositoryDir",
                 gav.groupId,
