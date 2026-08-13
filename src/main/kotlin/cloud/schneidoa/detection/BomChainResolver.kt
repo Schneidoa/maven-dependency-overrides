@@ -73,6 +73,9 @@ class BomChainResolver(private val localRepositoryDir: File) {
         val artifactId = dependency.artifactId.rawText?.trim()
         val rawVersion = dependency.version.rawText?.trim()
         if (groupId.isNullOrEmpty() || artifactId.isNullOrEmpty() || rawVersion.isNullOrEmpty()) return null
+        // Hands back rawVersion unchanged while MavenProjectsManager is uninitialized
+        // (IDEA 2026.2+), i.e. before the first Maven sync - the BOM then resolves to no
+        // POM in the local repository and lands in uncheckedBoms, i.e. Inconclusive.
         return Gav(groupId, artifactId, MavenPropertyResolver.resolve(rawVersion, model))
     }
 

@@ -4,6 +4,17 @@
 
 ## Unreleased
 
+### Changed
+
+- Compatibility moved to IntelliJ IDEA 2026.2 (build `262.*`); 2025.3 is no
+  longer supported. The plugin is built and verified against 2026.2.1.
+- Versions written as a property (`<version>${widget.version}</version>`, or a
+  BOM imported at one) are no longer resolved before the IDE's first Maven sync
+  finishes: IDEA 2026.2 makes `MavenPropertyResolver` a no-op until
+  `MavenProjectsManager` is initialized. Such an override is reported as "not
+  comparable", and a BOM imported at a property version as unreadable, until
+  the sync completes — never as safe to remove.
+
 ## 0.0.1 - 2026-08-12
 
 First release, so this describes the plugin as a whole rather than changes

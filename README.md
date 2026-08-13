@@ -2,7 +2,7 @@
 
 [![Build](https://github.com/Schneidoa/maven-dependency-overrides/actions/workflows/build.yml/badge.svg?branch=develop)](https://github.com/Schneidoa/maven-dependency-overrides/actions/workflows/build.yml)
 [![Release](https://github.com/Schneidoa/maven-dependency-overrides/actions/workflows/release.yml/badge.svg)](https://github.com/Schneidoa/maven-dependency-overrides/actions/workflows/release.yml)
-![IntelliJ IDEA](https://img.shields.io/badge/IntelliJ%20IDEA-2025.3-000000?logo=intellijidea)
+![IntelliJ IDEA](https://img.shields.io/badge/IntelliJ%20IDEA-2026.2-000000?logo=intellijidea)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 An IntelliJ IDEA plugin that flags Maven `<dependencyManagement>` version overrides that have
@@ -54,7 +54,7 @@ the plugin misses rather than guesses.
 
 ## Requirements
 
-IntelliJ IDEA 2025.3 (Community or Ultimate) with the bundled Maven support enabled. Any BOM
+IntelliJ IDEA 2026.2 (Community or Ultimate) with the bundled Maven support enabled. Any BOM
 involved in a check must be present in the local Maven repository — in practice this means the
 project has been imported at least once.
 
@@ -78,8 +78,8 @@ the run as an artifact. `verifyPlugin` is the gate that matters — it fails on 
 which is what the JetBrains Marketplace review rejects on too.
 
 The target platform is pinned in [build.gradle.kts][file:build.gradle.kts]
-(`intellijIdea("2025.3.5")`), and `sinceBuild`/`untilBuild` are deliberately restricted to
-`253.*`: the plugin is verified only against that baseline, and opening the range without a
+(`intellijIdea("2026.2.1")`), and `sinceBuild`/`untilBuild` are deliberately restricted to
+`262.*`: the plugin is verified only against that baseline, and opening the range without a
 re-verification pass would risk shipping broken detection.
 
 ### Source layout

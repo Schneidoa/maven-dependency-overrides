@@ -28,6 +28,9 @@ object DependencyManagementScanner {
 
         val xmlTag = dependency.xmlTag ?: return null
         val versionXmlTag = dependency.version.xmlTag ?: return null
+        // Hands back rawVersion unchanged while MavenProjectsManager is uninitialized
+        // (IDEA 2026.2+), i.e. before the first Maven sync - a ${...} version then flows
+        // through as literal text and settles on NOT_COMPARABLE rather than a guess.
         val resolvedVersion = MavenPropertyResolver.resolve(rawVersion, model)
         val (reason, suppressed) = classifyComment(findPrecedingComment(xmlTag))
 

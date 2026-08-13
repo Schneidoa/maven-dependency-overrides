@@ -43,7 +43,16 @@ class BomChainResolverTest : BasePlatformTestCase() {
         assertTrue(resolver().resolveBomChain(model, project).isEmpty())
     }
 
-    fun `test resolves a property based BOM version`() {
+    /**
+     * Since IDEA 2026.2, `MavenPropertyResolver.resolve` returns its input unchanged
+     * unless `MavenProjectsManager.isInitialized()` - which it is not in a light test
+     * fixture, nor in a real IDE before the first Maven sync finishes. The BOM keeps a
+     * raw `${'$'}{...}` version, which then finds no POM under the local repository, so the
+     * BOM ends up in `uncheckedBoms` and the override is reported Inconclusive rather
+     * than Confirmed. That is the intended failure direction - see
+     * `DependencyManagementScannerTest`'s counterpart test for the same platform change.
+     */
+    fun `test leaves a property based BOM version unresolved before Maven sync`() {
         val model = configureModule(
             dependencyManagementEntries = """
             <dependency>
@@ -60,7 +69,7 @@ class BomChainResolverTest : BasePlatformTestCase() {
         val chain = resolver().resolveBomChain(model, project)
 
         assertEquals(
-            listOf(BomImport(Gav("com.example", "acme-bom", "1.0.0"), emptyList())),
+            listOf(BomImport(Gav("com.example", "acme-bom", "${'$'}{acme.bom.version}"), emptyList())),
             chain
         )
     }

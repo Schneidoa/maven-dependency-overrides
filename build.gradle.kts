@@ -16,7 +16,7 @@ dependencies {
 
     // IntelliJ Platform Gradle Plugin Dependencies Extension - read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-dependencies-extension.html
     intellijPlatform {
-        intellijIdea("2025.3.5")
+        intellijIdea("2026.2.1")
         testFramework(TestFrameworkType.Platform)
 
         // Add plugin dependencies for compilation here:
@@ -29,13 +29,13 @@ intellijPlatform {
     pluginConfiguration {
         version = providers.gradleProperty("version")
 
-        // Target build 253 = IntelliJ IDEA 2025.3. Restricted to 253.* on purpose:
+        // Target build 262 = IntelliJ IDEA 2026.2. Restricted to 262.* on purpose:
         // this plugin is verified only against the exact IDE version pinned above,
         // so opening the range to future majors without a re-verification pass
         // would risk shipping broken behavior. Bump when a new baseline is verified.
         ideaVersion {
-            sinceBuild = "253"
-            untilBuild = "253.*"
+            sinceBuild = "262"
+            untilBuild = "262.*"
         }
 
         // Sourced from CHANGELOG.md via the org.jetbrains.changelog plugin: for the
