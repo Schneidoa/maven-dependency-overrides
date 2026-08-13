@@ -32,3 +32,15 @@ fun Gav.pomFileIn(localRepositoryDir: File): File = File(
     localRepositoryDir,
     "${groupId.replace('.', '/')}/$artifactId/$version/$artifactId-$version.pom"
 )
+
+/**
+ * Whether every segment is a literal that could actually be looked up or downloaded.
+ *
+ * MavenPropertyResolver.resolve hands back its input unchanged until Maven sync has run
+ * (verified in the 2026.2.1 bytecode: it early-returns unless MavenProjectsManager
+ * .isInitialized()), so before the first sync a BOM or parent declared at ${some.version}
+ * reaches us with the placeholder still in it. Such a coordinate is not a miss to be
+ * fetched - it is a coordinate we do not yet know.
+ */
+fun Gav.isConcrete(): Boolean =
+    listOf(groupId, artifactId, version).all { it.isNotBlank() && !it.contains("\${") }
