@@ -20,8 +20,10 @@ import com.intellij.psi.search.FilenameIndex
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.ui.TextFieldWithAutoCompletion
 import com.intellij.util.ui.FormBuilder
+import com.intellij.util.ui.JBUI
 import org.jetbrains.idea.maven.dom.MavenDomUtil
 import org.jetbrains.idea.maven.dom.model.MavenDomProjectModel
+import java.awt.Dimension
 import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.JComboBox
@@ -126,6 +128,27 @@ class AddOverrideDialog internal constructor(
             .addLabeledComponent("Reason (optional)", reasonField)
             .addComponent(hintLabel)
             .panel
+            .apply {
+                // Widening the panel is what widens the fields: FormBuilder gives the
+                // input column weightx = 1.0, so every pixel added here goes to the
+                // components rather than to the labels. Left to its own preferred size the
+                // form is about as wide as a default JTextField, which is too narrow for a
+                // real groupId and far too narrow for the hint line - the longest text in
+                // the dialog and the one the version prefill depends on being read.
+                //
+                // Height is deliberately left at the form's own: there are six rows and
+                // nothing that grows, so a taller dialog would only add empty space.
+                preferredSize = Dimension(JBUI.scale(620), preferredSize.height)
+            }
+
+    /**
+     * Persists the user's own resize, which is the other half of opening wider: the
+     * width below is a starting point, and anyone who wants a different one gets to
+     * set it by dragging the edge once. The key is namespaced to this plugin because
+     * the dimension service is application-wide and shared with the platform's own
+     * dialogs.
+     */
+    override fun getDimensionServiceKey(): String = "cloud.schneidoa.AddOverrideDialog"
 
     override fun doOKAction() {
         val ga = parseGa() ?: return

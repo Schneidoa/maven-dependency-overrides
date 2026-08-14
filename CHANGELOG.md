@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+### Changed
+- The Add Override dialog opens wider so a full groupId and the "currently managed at …"
+  hint line are readable without resizing, and it now remembers a width you set yourself.
+
 ### Added
 - BOM and parent POMs missing from the local Maven repository are now downloaded from the
   remote repositories configured in `settings.xml` — mirrors, proxies and credentials
