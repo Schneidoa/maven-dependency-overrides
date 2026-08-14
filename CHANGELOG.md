@@ -4,11 +4,15 @@
 
 ## Unreleased
 
+## 0.0.3 - 2026-08-14
+
 ### Changed
+
 - The Add Override dialog opens wider so a full groupId and the "currently managed at …"
   hint line are readable without resizing, and it now remembers a width you set yourself.
 
 ### Added
+
 - BOM and parent POMs missing from the local Maven repository are now downloaded from the
   remote repositories configured in `settings.xml` — mirrors, proxies and credentials
   included — so the Override Overview, the Add/Edit dialogs and the BOM chain view can give
@@ -18,6 +22,7 @@
   Overview says so when it has inconclusive rows.
 
 ### Fixed
+
 - A parent POM missing from the local repository silently ended the parent-chain walk,
   which could drop an override from the report entirely or report it as unmanaged. Such a
   chain is now reported as inconclusive.
