@@ -34,13 +34,38 @@ sealed class DetectedOverride {
         val candidate: OverrideCandidate,
         val uncheckedBoms: List<Gav>
     ) : DetectedOverride()
+
+    /**
+     * Every BOM in the chain was read successfully and none of them manages this
+     * artifact — so the entry pins a version that would otherwise come from
+     * Maven's transitive dependency mediation, not from dependency management.
+     *
+     * This is the shape of the most common CVE pin there is: an artifact pulled in
+     * transitively (`org.apache.qpid:proton-j` under `com.azure:azure-core-amqp`,
+     * say) gets pinned in `<dependencyManagement>` precisely *because* no BOM
+     * governs it. Such a pin used to be dropped from the results entirely, which
+     * made the tool window silently incomplete on exactly the entries a user is
+     * most likely to be hunting for. It is reported instead, with no verdict on
+     * whether it is still needed: answering that needs the resolved dependency
+     * tree, which this plugin does not compute.
+     *
+     * [checkedBoms] is every BOM the chain did contain, in precedence order — the
+     * evidence behind "none of these manages it", and empty only when a caller
+     * constructs this outside [OverrideDetector] (detection itself never reports
+     * Unmanaged for a module with no BOM chain at all; see [OverrideDetector.evaluate]).
+     */
+    data class Unmanaged(
+        val candidate: OverrideCandidate,
+        val checkedBoms: List<Gav>
+    ) : DetectedOverride()
 }
 
-/** The candidate common to both outcomes - lets callers navigate/display without a `when`. */
+/** The candidate common to every outcome - lets callers navigate/display without a `when`. */
 val DetectedOverride.candidate: OverrideCandidate
     get() = when (this) {
         is DetectedOverride.Confirmed -> candidate
         is DetectedOverride.Inconclusive -> candidate
+        is DetectedOverride.Unmanaged -> candidate
     }
 
 class OverrideDetector(private val bomVersionResolver: BomVersionResolver) {
@@ -80,7 +105,18 @@ class OverrideDetector(private val bomVersionResolver: BomVersionResolver) {
                     )
                 }
             is ManagedVersionLookup.NotFound ->
-                if (unchecked.isNotEmpty()) DetectedOverride.Inconclusive(candidate, unchecked) else null
+                when {
+                    unchecked.isNotEmpty() -> DetectedOverride.Inconclusive(candidate, unchecked)
+                    // A readable chain that manages this artifact nowhere: the pin acts on
+                    // transitive resolution rather than on a BOM. Reported, not dropped.
+                    bomChain.imports.isNotEmpty() ->
+                        DetectedOverride.Unmanaged(candidate, bomChain.imports.map { it.bom })
+                    // No BOM anywhere in the chain, so there is nothing here to override in the
+                    // first place - every literal-version <dependencyManagement> entry in the
+                    // module would otherwise be reported, turning a plain dependency-management
+                    // block into a full page of findings that say nothing.
+                    else -> null
+                }
         }
     }
 

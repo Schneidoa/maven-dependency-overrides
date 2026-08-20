@@ -53,8 +53,14 @@ class OverrideInspection(
                         )
                         // Silent on purpose. AHEAD_OF_BOM is a pin that is still doing its
                         // job - warning about it is noise. NOT_COMPARABLE reached no verdict,
-                        // so there is nothing to say. Both stay visible in the tool window.
-                        OverrideVerdict.AHEAD_OF_BOM, OverrideVerdict.NOT_COMPARABLE -> Unit
+                        // so there is nothing to say. UNMANAGED is not an override of anything
+                        // the BOM chain says, so the editor has no BOM-based claim to make about
+                        // it at all - and a warning on every hand-pinned transitive version would
+                        // be the loudest possible noise in exactly the projects that have most of
+                        // them. All three stay visible in the tool window.
+                        OverrideVerdict.AHEAD_OF_BOM,
+                        OverrideVerdict.NOT_COMPARABLE,
+                        OverrideVerdict.UNMANAGED -> Unit
                     }
                 }
             }

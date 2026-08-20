@@ -26,6 +26,11 @@ behind the BOM again on the next upgrade.
   files in the project in a single table, with a Status column (icon, label, and a full
   explanation on hover) covering every override including the ones the editor stays quiet
   about, plus add / edit / remove actions and click-to-navigate to the exact `<version>` tag.
+  That includes pins on artifacts **no BOM in the chain manages at all** — the usual shape of a
+  CVE pin on a transitive dependency, since an artifact no BOM governs is the one you have to
+  pin by hand. Those are listed as *not managed by BOM* with no verdict attached: whether the
+  pin still does anything depends on the resolved dependency tree rather than the BOM chain,
+  so the row hands you off to **Analyze Dependencies** instead of guessing.
 - **Shows where the version actually comes from**: the full parent-chain path from the module
   down to the BOM that manages it, e.g.
   `spring-boot-starter-parent → spring-boot-dependencies → jackson-bom:2.21.2` — not just the
@@ -51,6 +56,12 @@ That has a deliberate consequence: when a BOM in the chain can't be resolved loc
 override is reported as **inconclusive** rather than confirmed, and no "safe to remove" quick fix
 is offered. A wrong "safe to remove" recommendation could silently reintroduce a patched CVE, so
 the plugin misses rather than guesses.
+
+Versions written as `${...}` properties cannot be resolved until Maven has resolved the project's
+properties, and the same goes for a BOM imported at a property version. If *every* override found
+is in that state the tool window says so instead of showing a table of unresolved placeholders —
+refresh once the sync finishes. If only some are, you get the table plus a note saying how many
+rows are still incomplete.
 
 ## Requirements
 

@@ -226,6 +226,51 @@ class OverrideInspectionTest : BasePlatformTestCase() {
         assertTrue(highlights.none { it.description?.contains("acme-bom") == true })
     }
 
+    /**
+     * The counterpart to the tool window now listing these: UNMANAGED is visible in the
+     * inventory and silent in the editor, the same asymmetry AHEAD_OF_BOM has. A warning on
+     * every hand-pinned transitive version would be loudest in exactly the projects that have
+     * the most of them - and the editor has no BOM-based claim to make about such a pin anyway.
+     * Asserts on "BOM" rather than the BOM's name because the unmanaged explanation names no
+     * single BOM; a regression here would surface its "None of the N BOMs" wording.
+     */
+    fun `test does not warn about an entry no BOM in the chain manages`() {
+        myFixture.enableInspections(testInspection())
+        myFixture.configureByText(
+            "pom.xml",
+            """
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+                <modelVersion>4.0.0</modelVersion>
+                <groupId>com.example</groupId>
+                <artifactId>test-module</artifactId>
+                <version>1.0.0</version>
+
+                <dependencyManagement>
+                    <dependencies>
+                        <dependency>
+                            <groupId>com.example</groupId>
+                            <artifactId>acme-bom</artifactId>
+                            <version>1.0.0</version>
+                            <type>pom</type>
+                            <scope>import</scope>
+                        </dependency>
+                        <dependency>
+                            <groupId>org.example</groupId>
+                            <artifactId>totally-unmanaged</artifactId>
+                            <version>9.9.9</version>
+                        </dependency>
+                    </dependencies>
+                </dependencyManagement>
+            </project>
+            """.trimIndent()
+        )
+
+        val highlights = myFixture.doHighlighting()
+
+        assertTrue(highlights.none { it.description?.contains("BOM") == true })
+        assertEmpty(myFixture.getAllQuickFixes())
+    }
+
     fun `test an override below the BOM offers remove so the newer BOM version applies`() {
         myFixture.enableInspections(testInspection())
         myFixture.configureByText(

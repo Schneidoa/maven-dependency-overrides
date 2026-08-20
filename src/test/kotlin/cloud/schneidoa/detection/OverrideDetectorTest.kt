@@ -125,7 +125,13 @@ class OverrideDetectorTest : BasePlatformTestCase() {
         assertTrue(detector.detect(model, project).isEmpty())
     }
 
-    fun `test drops a candidate that is not managed by any imported BOM`() {
+    /**
+     * The shape of a pin on a transitive dependency - the most common CVE pin there is, since
+     * an artifact no BOM governs is exactly the one you have to pin by hand. This used to be
+     * dropped from the results, which made the tool window silently incomplete on the entries
+     * users are most likely hunting for.
+     */
+    fun `test reports a candidate no BOM in the chain manages as unmanaged`() {
         val model = configureModuleImportingAcmeBom(
             """
             <dependency>
@@ -137,7 +143,85 @@ class OverrideDetectorTest : BasePlatformTestCase() {
         )
         val detector = OverrideDetector(BomVersionResolver(localRepositoryDir()))
 
+        val unmanaged = detector.detect(model, project).single() as DetectedOverride.Unmanaged
+
+        assertEquals("totally-unmanaged", unmanaged.candidate.ga.artifactId)
+        assertEquals("9.9.9", unmanaged.candidate.declaredVersion)
+        assertEquals(listOf(Gav("com.example", "acme-bom", "1.0.0")), unmanaged.checkedBoms)
+    }
+
+    /**
+     * Without a BOM anywhere in the chain there is nothing to override, so a plain
+     * dependency-management block must not turn into a page of findings. This is the one
+     * case where "not managed by any BOM" is still dropped rather than reported - see
+     * OverrideDetector.evaluate.
+     */
+    fun `test drops a candidate in a module whose chain imports no BOM at all`() {
+        val file = myFixture.configureByText(
+            "pom.xml",
+            """
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+                <modelVersion>4.0.0</modelVersion>
+                <groupId>com.example</groupId>
+                <artifactId>test-module</artifactId>
+                <version>1.0.0</version>
+
+                <dependencyManagement>
+                    <dependencies>
+                        <dependency>
+                            <groupId>org.example</groupId>
+                            <artifactId>totally-unmanaged</artifactId>
+                            <version>9.9.9</version>
+                        </dependency>
+                    </dependencies>
+                </dependencyManagement>
+            </project>
+            """.trimIndent()
+        )
+        val model = MavenDomUtil.getMavenDomProjectModel(project, file.virtualFile)!!
+        val detector = OverrideDetector(BomVersionResolver(localRepositoryDir()))
+
         assertTrue(detector.detect(model, project).isEmpty())
+    }
+
+    /**
+     * An unreadable BOM outranks "nothing manages it": the chain we searched was not the whole
+     * chain, so a BOM above the break could manage this artifact after all. Inconclusive, not
+     * Unmanaged - the same refuse-to-guess reflex as everywhere else in this class.
+     */
+    fun `test prefers inconclusive over unmanaged when a BOM in the chain is unreadable`() {
+        val file = myFixture.configureByText(
+            "pom.xml",
+            """
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+                <modelVersion>4.0.0</modelVersion>
+                <groupId>com.example</groupId>
+                <artifactId>test-module</artifactId>
+                <version>1.0.0</version>
+
+                <dependencyManagement>
+                    <dependencies>
+                        <dependency>
+                            <groupId>com.example</groupId>
+                            <artifactId>does-not-exist-bom</artifactId>
+                            <version>9.9.9</version>
+                            <type>pom</type>
+                            <scope>import</scope>
+                        </dependency>
+                        <dependency>
+                            <groupId>org.example</groupId>
+                            <artifactId>totally-unmanaged</artifactId>
+                            <version>9.9.9</version>
+                        </dependency>
+                    </dependencies>
+                </dependencyManagement>
+            </project>
+            """.trimIndent()
+        )
+        val model = MavenDomUtil.getMavenDomProjectModel(project, file.virtualFile)!!
+        val detector = OverrideDetector(BomVersionResolver(localRepositoryDir()))
+
+        assertTrue(detector.detect(model, project).single() is DetectedOverride.Inconclusive)
     }
 
     fun `test reports inconclusive when an imported BOM cannot be resolved locally`() {
