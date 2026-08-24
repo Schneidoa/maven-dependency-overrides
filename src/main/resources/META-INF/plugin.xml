@@ -7,7 +7,7 @@
          currently fails the TLS handshake outright (plain HTTP answers 403). Switch it back once
          the domain serves HTTPS - the repository link stays useful either way. -->
     <vendor url="https://github.com/Schneidoa/maven-dependency-overrides"
-            email="daniel@schneidoa.de">Daniel Schneider</vendor>
+            email="jetbrains@ds-mail.de">Daniel Schneider</vendor>
 
     <description><![CDATA[
         <p>
