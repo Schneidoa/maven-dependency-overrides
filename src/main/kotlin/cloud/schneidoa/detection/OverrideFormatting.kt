@@ -1,7 +1,6 @@
 package cloud.schneidoa.detection
 
 import cloud.schneidoa.resolver.VersionRelation
-import cloud.schneidoa.resolver.isConcrete
 
 /**
  * Formats "declared version → what the BOM chain manages it at" for display; "?" when the
@@ -96,28 +95,3 @@ fun managedByChain(override: DetectedOverride): String = when (override) {
     is DetectedOverride.Inconclusive -> ""
     is DetectedOverride.Unmanaged -> ""
 }
-
-/**
- * Whether this result was computed from text that still holds an unresolved `${...}`, i.e.
- * whether Maven property resolution was unavailable when it was produced.
- *
- * `MavenPropertyResolver.resolve` returns its input unchanged until Maven has initialized, and two
- * things then go wrong at once - both visible here. The declared version arrives as placeholder
- * text and can be compared to nothing (`NOT_COMPARABLE`), and a BOM imported at a property version
- * resolves to no POM at all, which makes every override in that module `Inconclusive`. Only
- * `Inconclusive` can carry a placeholder BOM: `Confirmed` and `Unmanaged` both required every BOM
- * in the chain to have been read, which a placeholder coordinate never is.
- *
- * Deliberately evidence rather than a platform flag. `MavenProjectsManager.isInitialized()` looks
- * like the direct question, but it is also false for a project that was never imported as a Maven
- * project - where no sync is pending, refreshing changes nothing, and detection works fine off
- * `FilenameIndex`. Gating the UI on that flag makes such a project permanently unusable; asking
- * the data instead keeps the answer tied to the defect it is meant to describe. It also separates
- * cleanly from the other reason a row says "?": a BOM whose coordinate is fully known but whose
- * POM is simply absent is not a property problem, and returns false here.
- */
-fun dependsOnUnresolvedProperty(override: DetectedOverride): Boolean =
-    override.candidate.declaredVersion.contains("\${") || when (override) {
-        is DetectedOverride.Inconclusive -> override.uncheckedBoms.any { !it.isConcrete() }
-        is DetectedOverride.Confirmed, is DetectedOverride.Unmanaged -> false
-    }

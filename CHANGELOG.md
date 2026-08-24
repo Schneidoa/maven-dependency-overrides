@@ -15,14 +15,6 @@
   about them, like it already does for overrides above the BOM version.
 
 ### Changed
-- The Override Overview no longer presents a table built entirely from unresolved `${...}`
-  versions. Before Maven has resolved a project's properties, a property-declared override — or
-  a BOM imported at a property version — becomes a `${foo.version} → ?` row that disappears again
-  on the next refresh, so a whole page of confident-looking findings could be an artifact of the
-  sync not having run. When every override found is in that state the panel now explains it and
-  points at Refresh; when only some are, the table is still shown with a note saying how many
-  rows are incomplete. The check looks at the rows themselves rather than at Maven's
-  initialization flag, so a project that simply isn't a Maven import keeps its overview.
 - The Add Override dialog opens wider so a full groupId and the "currently managed at …"
   hint line are readable without resizing, and it now remembers a width you set yourself.
 

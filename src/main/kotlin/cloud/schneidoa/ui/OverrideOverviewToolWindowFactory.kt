@@ -7,7 +7,6 @@ import cloud.schneidoa.detection.ProjectOverrideScanner
 import cloud.schneidoa.detection.buildBomChainReportFor
 import cloud.schneidoa.detection.candidate
 import cloud.schneidoa.detection.declaredToManaged
-import cloud.schneidoa.detection.dependsOnUnresolvedProperty
 import cloud.schneidoa.detection.managedByChain
 import cloud.schneidoa.detection.removeOverride
 import cloud.schneidoa.detection.resolvingMissingPoms
@@ -42,18 +41,15 @@ import org.jetbrains.idea.maven.dom.MavenDomUtil
 import org.jetbrains.idea.maven.dom.model.MavenDomProjectModel
 import org.jetbrains.idea.maven.project.MavenProjectsManager
 import java.awt.BorderLayout
-import java.awt.CardLayout
 import java.awt.Component
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicInteger
-import javax.swing.BoxLayout
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JPopupMenu
 import javax.swing.JTable
-import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
 import javax.swing.table.DefaultTableCellRenderer
 import javax.swing.table.DefaultTableModel
@@ -70,35 +66,6 @@ class OverrideOverviewToolWindowFactory : ToolWindowFactory {
 }
 
 private val COLUMNS = arrayOf("Module", "Dependency", "Declared → Managed", "Managed By", "Status")
-
-private const val CARD_TABLE = "table"
-private const val CARD_ALL_UNRESOLVED = "all-unresolved"
-
-/**
- * Shown instead of the table when *every* override found depends on an unresolved `${...}`, which
- * means Maven property resolution was unavailable for all of them (see
- * [cloud.schneidoa.detection.dependsOnUnresolvedProperty]). In a project that declares its BOM
- * imports through properties - the standard Spring Boot shape - that is the whole table before the
- * first sync: page after page of "${foo.version} → ?" rows that vanish again on the next refresh.
- * Presenting nothing and saying why is the honest version of that state.
- *
- * The condition is "all of them", never a global flag, and never a partial count: a project where
- * some rows resolve still shows its table, with [partiallyUnresolvedText] naming the rest.
- *
- * Why not `MavenProjectsManager.isInitialized()`, which reads like the direct question: it is also
- * false for a project that was never imported as a Maven project, where nothing is pending and
- * Refresh will never change it, so gating on it empties this panel permanently in a project it
- * could still serve.
- */
-private const val ALL_UNRESOLVED_TEXT =
-    "<html><div style='text-align:center'>Nothing can be reported yet.<br><br>" +
-        "Every override found declares its version - or the BOM it would be compared against - " +
-        "through a \${...} property, and those cannot be resolved until this project has been " +
-        "imported and synced by Maven.<br>Use Refresh above once that is done.</div></html>"
-
-private fun partiallyUnresolvedText(unresolved: Int, total: Int) =
-    "$unresolved of $total overrides depend on \${...} properties that are not resolved yet - " +
-        "those rows stay incomplete until Maven finishes syncing."
 
 private class OverrideOverviewPanel(private val project: Project) {
     private val scanner = ProjectOverrideScanner()
@@ -128,36 +95,11 @@ private class OverrideOverviewPanel(private val project: Project) {
         columnModel.getColumn(COLUMNS.lastIndex).cellRenderer = VerdictCellRenderer()
     }
     private val offlineNotice = JLabel().apply { isVisible = false }
-    private val unresolvedPropertyNotice = JLabel().apply { isVisible = false }
-
-    private val allUnresolvedCard = JPanel(BorderLayout()).apply {
-        add(
-            JLabel(ALL_UNRESOLVED_TEXT).apply { horizontalAlignment = SwingConstants.CENTER },
-            BorderLayout.CENTER
-        )
-    }
-
-    /**
-     * Table or explanation, never both. A CardLayout rather than toggling visibility so the
-     * hidden branch cannot leave an empty table looking like "no overrides found" - which is the
-     * one message this panel must never show by accident.
-     */
-    private val cards = JPanel(CardLayout()).apply {
-        add(JBScrollPane(table), CARD_TABLE)
-        add(allUnresolvedCard, CARD_ALL_UNRESOLVED)
-    }
-
-    /** Two independent notices that can both apply at once, so they stack rather than share a slot. */
-    private val notices = JPanel().apply {
-        layout = BoxLayout(this, BoxLayout.Y_AXIS)
-        add(unresolvedPropertyNotice)
-        add(offlineNotice)
-    }
 
     val component: JPanel = JPanel(BorderLayout()).apply {
         add(createToolbar().component, BorderLayout.NORTH)
-        add(cards, BorderLayout.CENTER)
-        add(notices, BorderLayout.SOUTH)
+        add(JBScrollPane(table), BorderLayout.CENTER)
+        add(offlineNotice, BorderLayout.SOUTH)
     }
 
     init {
@@ -284,18 +226,6 @@ private class OverrideOverviewPanel(private val project: Project) {
     ) {
         currentEntries = entries
         mavenSyncedRows = syncedRows
-        // Counted, not just tested, because the count decides between three presentations: a
-        // table, a table plus a caveat, and no table at all. Every row unresolved means the whole
-        // result set is an artifact of property resolution being unavailable, which is worth
-        // refusing to render; some rows unresolved is a real result with a hole in it.
-        val unresolved = entries.count { dependsOnUnresolvedProperty(it.override) }
-        val allUnresolved = entries.isNotEmpty() && unresolved == entries.size
-        unresolvedPropertyNotice.isVisible = unresolved > 0 && !allUnresolved
-        unresolvedPropertyNotice.text = if (unresolvedPropertyNotice.isVisible) {
-            partiallyUnresolvedText(unresolved, entries.size)
-        } else {
-            ""
-        }
         // One message for the whole table rather than a per-row explanation: the cause is
         // global (Maven's offline setting), and repeating it on every Inconclusive row would
         // bury it rather than surface it. This is also why the reason is not threaded through
@@ -319,14 +249,7 @@ private class OverrideOverviewPanel(private val project: Project) {
                 )
             )
         }
-        // The rows are still built and currentEntries/mavenSyncedRows still set even when the
-        // card hides them: they describe exactly what was scanned, so keeping them in step with
-        // each other matters more than whether they are on screen, and the next refresh replaces
-        // all three together either way.
-        showCard(if (allUnresolved) CARD_ALL_UNRESOLVED else CARD_TABLE)
     }
-
-    private fun showCard(name: String) = (cards.layout as CardLayout).show(cards, name)
 
     private fun navigateTo(entry: ProjectOverrideEntry) {
         val offset = ReadAction.compute<Int?, Throwable> {
