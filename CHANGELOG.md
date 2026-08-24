@@ -4,21 +4,10 @@
 
 ## Unreleased
 
-### Added
-- Overrides that no BOM in the module's chain manages are now listed in the Override Overview
-  with a **Not managed by BOM** status, instead of being dropped from the results. This is the
-  shape of the most common hand-written pin there is — an artifact pulled in transitively, and
-  pinned precisely because no BOM governs it — so the overview was silently incomplete on
-  exactly the entries most worth reviewing. No verdict is offered on whether such a pin is
-  still needed: that depends on the resolved dependency tree, not on the BOM chain, and
-  **Analyze Dependencies** on the row is the way to check. The editor inspection stays silent
-  about them, like it already does for overrides above the BOM version.
-
-### Changed
-- The Add Override dialog opens wider so a full groupId and the "currently managed at …"
-  hint line are readable without resizing, and it now remembers a width you set yourself.
+## 0.0.5 - 2026-08-24
 
 ### Added
+
 - BOM and parent POMs missing from the local Maven repository are now downloaded from the
   remote repositories configured in `settings.xml` — mirrors, proxies and credentials
   included — so the Override Overview, the Add/Edit dialogs and the BOM chain view can give
@@ -27,7 +16,13 @@
 - Maven's "Work offline" setting is honored: nothing is downloaded, and the Override
   Overview says so when it has inconclusive rows.
 
+### Changed
+
+- The Add Override dialog opens wider so a full groupId and the "currently managed at …"
+  hint line are readable without resizing, and it now remembers a width you set yourself.
+
 ### Fixed
+
 - A parent POM missing from the local repository silently ended the parent-chain walk,
   which could drop an override from the report entirely or report it as unmanaged. Such a
   chain is now reported as inconclusive.
