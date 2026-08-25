@@ -4,7 +4,10 @@
 
 ## Unreleased
 
+## 0.0.7 - 2026-08-25
+
 ### Added
+
 - The Override Overview toolbar has a **Filter by Status** button: check or uncheck any of
   the six statuses to show only matching rows. The filter stays applied across Refresh, and
   a note above the table says how many rows it's currently hiding.
@@ -12,11 +15,13 @@
 ## 0.0.6 - 2026-08-24
 
 ### Changed
+
 - Updated the vendor contact email address in the plugin metadata.
 
 ## 0.0.5 - 2026-08-24
 
 ### Changed
+
 - Reverted the "hide the results table when every override depends on an unresolved
   `${...}` property" behavior shipped in 0.0.4. In real large projects (internal BOMs
   imported at `${revision}`, modules Maven never imported) it hid the panel
@@ -27,6 +32,7 @@
 ## 0.0.4 - 2026-08-20
 
 ### Added
+
 - Overrides that no BOM in the module's chain manages are now listed in the Override Overview
   with a **Not managed by BOM** status, instead of being dropped from the results. This is the
   shape of the most common hand-written pin there is — an artifact pulled in transitively, and
@@ -37,6 +43,7 @@
   about them, like it already does for overrides above the BOM version.
 
 ### Changed
+
 - The Override Overview no longer presents a table built entirely from unresolved `${...}`
   versions. Before Maven has resolved a project's properties, a property-declared override — or
   a BOM imported at a property version — becomes a `${foo.version} → ?` row that disappears again
@@ -50,10 +57,12 @@
 ## 0.0.3 - 2026-08-14
 
 ### Changed
+
 - The Add Override dialog opens wider so a full groupId and the "currently managed at …"
   hint line are readable without resizing, and it now remembers a width you set yourself.
 
 ### Added
+
 - BOM and parent POMs missing from the local Maven repository are now downloaded from the
   remote repositories configured in `settings.xml` — mirrors, proxies and credentials
   included — so the Override Overview, the Add/Edit dialogs and the BOM chain view can give
@@ -63,6 +72,7 @@
   Overview says so when it has inconclusive rows.
 
 ### Fixed
+
 - A parent POM missing from the local repository silently ended the parent-chain walk,
   which could drop an override from the report entirely or report it as unmanaged. Such a
   chain is now reported as inconclusive.
