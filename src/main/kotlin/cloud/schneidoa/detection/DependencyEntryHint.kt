@@ -19,6 +19,14 @@ import cloud.schneidoa.resolver.compareDeclaredToManaged
  * `AddOverrideDialog.prefillVersion`) removes the trap entirely: there is nothing
  * here to recurse into.
  */
+/**
+ * [prefillVersion] is `null` for "leave the field alone", never for "there is nothing to
+ * say" - clearing the field is itself a prefill decision, written as `""`. Without that
+ * distinction, switching the entered coordinate from one the chain manages to one it
+ * doesn't would leave a stale, no-longer-relevant version sitting in the field from the
+ * previous coordinate's auto-prefill, with nothing to prompt the user to notice it no
+ * longer means anything.
+ */
 data class DependencyEntryHint(val hintText: String, val prefillVersion: String? = null)
 
 /**
@@ -41,7 +49,17 @@ fun dependencyEntryHint(
     val enteredVersion = declaredVersion.trim()
     val managed = ga?.let { candidates.managedVersionOf(it) }
 
-    val prefillVersion = if (!versionEditedByUser && managed != null && enteredVersion != managed) managed else null
+    // A non-blank field the user hasn't edited can only hold text a previous call's
+    // prefill wrote (versionEditedByUser sticks true forever after the first manual
+    // keystroke - see AddOverrideDialog). If the coordinate has since changed to one
+    // the chain doesn't manage, that leftover value belongs to a different artifact
+    // entirely and is cleared rather than left to look like a still-relevant answer.
+    val prefillVersion = when {
+        versionEditedByUser -> null
+        managed != null && enteredVersion != managed -> managed
+        managed == null && enteredVersion.isNotBlank() -> ""
+        else -> null
+    }
 
     // The verdict reflects what the field will read once the prefill (if any) lands,
     // not the pre-prefill text - so the hint is correct immediately instead of one

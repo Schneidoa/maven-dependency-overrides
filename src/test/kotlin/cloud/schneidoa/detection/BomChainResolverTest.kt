@@ -493,6 +493,56 @@ class BomChainResolverTest : BasePlatformTestCase() {
         assertTrue(chain.imports.isEmpty())
     }
 
+    /**
+     * The relativePath analogue of the local-repository "POM present but yields no
+     * model" case above: a sibling file exists at the declared <relativePath> but is
+     * not a Maven POM. Before this was fixed, resolveParentViaRelativePath returned
+     * null here with no report at all, and the walk fell through to the repository
+     * lookup silently - reading as a fully resolved chain even though the relativePath
+     * copy (the one a real Maven reactor build would actually use) was broken, and
+     * whatever the repository fallback found there might be a stale, unrelated
+     * previously-installed copy of the same coordinate.
+     */
+    fun `test reports a relativePath parent that resolves to a file but yields no model, then still falls back to the repository`() {
+        myFixture.addFileToProject(
+            "parent/pom.xml",
+            """
+            <error>
+                <status>404</status>
+                <message>Not Found</message>
+            </error>
+            """.trimIndent()
+        )
+        val childFile = myFixture.addFileToProject(
+            "child/pom.xml",
+            """
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+                <modelVersion>4.0.0</modelVersion>
+                <parent>
+                    <groupId>com.example</groupId>
+                    <artifactId>composing-bom</artifactId>
+                    <version>1.0.0</version>
+                    <relativePath>../parent/pom.xml</relativePath>
+                </parent>
+                <artifactId>child</artifactId>
+            </project>
+            """.trimIndent()
+        )
+
+        val childModel = MavenDomUtil.getMavenDomProjectModel(project, childFile.virtualFile)!!
+        val chain = resolver().resolveBomChain(childModel, project)
+
+        // Reported as truncated even though a chain was still found below: the
+        // relativePath copy - the one that would actually be used in a real reactor
+        // build - was broken, so this is not a chain that was fully walked, regardless
+        // of what the repository fallback happened to find under the same coordinate.
+        assertEquals(listOf(Gav("com.example", "composing-bom", "1.0.0")), chain.truncatedAt)
+        assertEquals(
+            listOf(BomImport(Gav("com.example", "legacy-bom", "1.0.0"), listOf("composing-bom"))),
+            chain.imports
+        )
+    }
+
     private fun resolver(): BomChainResolver {
         val fixtureUrl = javaClass.classLoader.getResource("fixtures/local-repo")
             ?: error("Test fixture local-repo not found on classpath")

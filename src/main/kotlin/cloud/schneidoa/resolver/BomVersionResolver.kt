@@ -66,17 +66,22 @@ class BomVersionResolver(
         val unchecked = mutableListOf<Gav>()
 
         for (bom in bomsInPrecedenceOrder) {
-            when (val result = modelResolver.buildEffectiveModel(bom)) {
-                is BomModelResult.Failure -> unchecked += bom
-                is BomModelResult.Success -> {
-                    val managedVersion = result.effectiveModel.dependencyManagement
-                        ?.dependencies
-                        ?.firstOrNull { it.groupId == target.groupId && it.artifactId == target.artifactId }
-                        ?.version
-                    if (managedVersion != null) {
-                        return ManagedVersionLookup.Found(managedVersion, bom, unchecked.toList())
-                    }
+            // Assigned rather than switched on as a bare statement: a `when` over a sealed
+            // class is only exhaustiveness-checked by the compiler when its value is
+            // actually used, so a future third BomModelResult subtype added anywhere in
+            // the sealed hierarchy fails to compile here instead of silently doing nothing.
+            val managedVersion: String? = when (val result = modelResolver.buildEffectiveModel(bom)) {
+                is BomModelResult.Failure -> {
+                    unchecked += bom
+                    null
                 }
+                is BomModelResult.Success -> result.effectiveModel.dependencyManagement
+                    ?.dependencies
+                    ?.firstOrNull { it.groupId == target.groupId && it.artifactId == target.artifactId }
+                    ?.version
+            }
+            if (managedVersion != null) {
+                return ManagedVersionLookup.Found(managedVersion, bom, unchecked.toList())
             }
         }
 
@@ -96,26 +101,26 @@ class BomVersionResolver(
         val unchecked = mutableListOf<Gav>()
 
         for (bom in bomsInPrecedenceOrder) {
-            when (val result = modelResolver.buildEffectiveModel(bom)) {
-                is BomModelResult.Failure -> unchecked += bom
-                is BomModelResult.Success ->
-                    result.effectiveModel.dependencyManagement?.dependencies?.forEach { dependency ->
-                        val groupId = dependency.groupId ?: return@forEach
-                        val artifactId = dependency.artifactId ?: return@forEach
-                        val version = dependency.version ?: return@forEach
-                        // putIfAbsent, not put: the first BOM in precedence order wins,
-                        // mirroring resolveManagedVersion's early return.
-                        versions.putIfAbsent(Ga(groupId, artifactId), version)
-                    }
+            // Same exhaustiveness reasoning as resolveManagedVersion: the `when`'s value
+            // (a dependency list, or null for a BOM that failed to build) is used below,
+            // so a missing case is a compile error instead of a silent no-op.
+            val dependencies = when (val result = modelResolver.buildEffectiveModel(bom)) {
+                is BomModelResult.Failure -> {
+                    unchecked += bom
+                    null
+                }
+                is BomModelResult.Success -> result.effectiveModel.dependencyManagement?.dependencies
+            }
+            dependencies?.forEach { dependency ->
+                val groupId = dependency.groupId ?: return@forEach
+                val artifactId = dependency.artifactId ?: return@forEach
+                val version = dependency.version ?: return@forEach
+                // putIfAbsent, not put: the first BOM in precedence order wins,
+                // mirroring resolveManagedVersion's early return.
+                versions.putIfAbsent(Ga(groupId, artifactId), version)
             }
         }
 
         return ManagedVersionCatalog(versions, unchecked.toList())
     }
-}
-
-/** The unchecked list regardless of outcome - both branches carry the same contract. */
-fun ManagedVersionLookup.uncheckedBoms(): List<Gav> = when (this) {
-    is ManagedVersionLookup.Found -> uncheckedBoms
-    is ManagedVersionLookup.NotFound -> uncheckedBoms
 }

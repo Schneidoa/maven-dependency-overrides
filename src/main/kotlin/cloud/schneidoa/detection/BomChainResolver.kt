@@ -119,7 +119,7 @@ class BomChainResolver(
         val parent = model.mavenParent
         if (parent.xmlTag == null) return null
 
-        return resolveParentViaRelativePath(model, parent, project)
+        return resolveParentViaRelativePath(model, parent, project, onTruncated)
             ?: resolveParentViaLocalRepository(parent, model, project, onTruncated)
     }
 
@@ -133,11 +133,23 @@ class BomChainResolver(
      * possibly picking up an unrelated file that happens to sit there. If
      * the resolved path is a directory rather than a file (also valid per
      * Maven's own relativePath semantics), looks for pom.xml inside it.
+     *
+     * [onTruncated] fires only for the case that is otherwise silent: the relativePath
+     * resolves to a real file, but that file does not yield a DOM model (malformed XML,
+     * an in-progress edit, a merge conflict). Every other null return here (no
+     * relativePath given and "../pom.xml" doesn't exist, an explicit-empty
+     * <relativePath/>, no containing file to resolve against) is a normal, expected
+     * reason to fall back to the repository lookup and is not reported - the repository
+     * lookup has its own onTruncated for whatever it in turn cannot resolve. Without
+     * this one case reported, a relativePath'd parent that is merely broken right now
+     * would silently fall through to whatever unrelated, possibly stale copy of the same
+     * GAV happens to sit in the local repository, and the walk would read as complete.
      */
     private fun resolveParentViaRelativePath(
         model: MavenDomProjectModel,
         parent: MavenDomParent,
-        project: Project
+        project: Project,
+        onTruncated: (Gav) -> Unit
     ): MavenDomProjectModel? {
         val currentFile = model.xmlTag?.containingFile?.virtualFile ?: return null
         val baseDir = currentFile.parent ?: return null
@@ -151,8 +163,23 @@ class BomChainResolver(
 
         val resolved = VfsUtilCore.findRelativeFile(relativePath, baseDir) ?: return null
         val parentFile: VirtualFile? = if (resolved.isDirectory) resolved.findChild("pom.xml") else resolved
-        return parentFile?.let { MavenDomUtil.getMavenDomProjectModel(project, it) }
+        val parentModel = parentFile?.let { MavenDomUtil.getMavenDomProjectModel(project, it) }
+        if (parentFile != null && parentModel == null) onTruncated(declaredParentGav(parent))
+        return parentModel
     }
+
+    /**
+     * The `<parent>` element's own declared coordinate, with "?" standing in for
+     * whichever parts are missing or blank - the same placeholder [artifactIdOf] uses,
+     * so a rendered [BomChain.truncatedAt] entry says what is actually known about the
+     * parent that broke the walk instead of inventing a value. Shared by both parent
+     * resolution strategies so their placeholder GAVs are constructed identically.
+     */
+    private fun declaredParentGav(parent: MavenDomParent): Gav = Gav(
+        parent.groupId.rawText?.trim()?.takeUnless { it.isEmpty() } ?: "?",
+        parent.artifactId.rawText?.trim()?.takeUnless { it.isEmpty() } ?: "?",
+        parent.version.rawText?.trim()?.takeUnless { it.isEmpty() } ?: "?"
+    )
 
     /**
      * Looks the parent POM up by GAV coordinate in the local Maven
@@ -179,13 +206,7 @@ class BomChainResolver(
             // displayed coordinate says what is actually known instead of inventing one. Note this
             // deliberately does NOT call onMissingPom: there is nothing concrete to download, and
             // handing a "?" coordinate to RemotePomFetcher would be a guaranteed-404 request.
-            onTruncated(
-                Gav(
-                    groupId?.takeUnless { it.isEmpty() } ?: "?",
-                    artifactId?.takeUnless { it.isEmpty() } ?: "?",
-                    rawVersion?.takeUnless { it.isEmpty() } ?: "?"
-                )
-            )
+            onTruncated(declaredParentGav(parent))
             return null
         }
         val version = MavenPropertyResolver.resolve(rawVersion, model)

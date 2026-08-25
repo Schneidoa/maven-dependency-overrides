@@ -26,15 +26,25 @@ class BomEffectiveModelResolver(
 
     /**
      * Memoizes per resolver instance, which is what makes the cache safe rather than a
-     * staleness hazard: detection builds a fresh resolver for every inspection pass
-     * (see `OverrideDetector.forProject`), so nothing here outlives one pass over one
-     * POM. Within that pass the same BOM is asked for once per override in the file -
+     * staleness hazard. The editor inspection builds a fresh resolver for every pass over
+     * every file (see `OverrideDetector.forProject`, called once per POM in
+     * `OverrideInspection.buildVisitor`), so nothing there outlives one pass over one
+     * POM - and within that pass the same BOM is asked for once per override in the file,
      * ten overrides over a three-BOM chain means thirty model builds instead of three,
      * each one parsing the BOM's whole parent chain off disk.
      *
-     * Deliberately not hoisted to a longer-lived (project- or application-level) cache:
-     * a BOM POM in the local repository is only immutable for release versions, and a
-     * re-installed SNAPSHOT BOM would then be answered from a stale model - which is
+     * The tool window's `ProjectOverrideScanner` bounds the same instance more coarsely:
+     * one `OverrideDetector` - and so one cache - is built per `scan()` call and reused
+     * across every `pom.xml` in the project for that one scan (deliberately, since many
+     * modules in a reactor typically share the same parent/BOM chain, and rebuilding an
+     * already-seen BOM's effective model once per module instead of once per scan would
+     * undo exactly the savings described above). The cache still cannot survive a scan:
+     * a fresh instance is built on every call, so a re-installed SNAPSHOT is answered from
+     * a stale model for, at worst, the remainder of one already-in-flight scan - the next
+     * Refresh always starts clean. What must never happen is a cache hoisted to a
+     * project- or application-level singleton that outlives a single `detect()`/`scan()`
+     * call: a BOM POM in the local repository is only immutable for release versions, and
+     * answering from a model that predates a `mvn install` across multiple refreshes is
      * exactly how this plugin would come to claim an override is "safe to remove" on
      * evidence that no longer holds.
      *

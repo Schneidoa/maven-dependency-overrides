@@ -31,38 +31,48 @@ class OverrideInspection(
                 val detector = detectorFactory(project)
 
                 for (result in detector.detect(model, project)) {
-                    when (verdictOf(result)) {
-                        // Redundant: the BOM caught up, so removal is the whole point.
-                        // Behind the BOM: removing the pin raises the version to the BOM's,
-                        // which is the desired outcome - such a pin is nearly always one set
-                        // once and never revisited, now holding the dependency below what the
-                        // BOM already ships. The message says so explicitly, so the fix isn't
-                        // a silent build-affecting change.
-                        OverrideVerdict.REDUNDANT, OverrideVerdict.BEHIND_BOM -> holder.registerProblem(
-                            result.candidate.versionXmlTag,
-                            verdictExplanation(result),
-                            ProblemHighlightType.WEAK_WARNING,
-                            RemoveOverrideQuickFix(),
-                            SuppressOverrideQuickFix()
-                        )
-                        OverrideVerdict.INCONCLUSIVE -> holder.registerProblem(
-                            result.candidate.versionXmlTag,
-                            verdictExplanation(result),
-                            ProblemHighlightType.WEAK_WARNING,
-                            SuppressOverrideQuickFix()
-                        )
-                        // Silent on purpose. AHEAD_OF_BOM is a pin that is still doing its
-                        // job - warning about it is noise. NOT_COMPARABLE reached no verdict,
-                        // so there is nothing to say. UNMANAGED is not an override of anything
-                        // the BOM chain says, so the editor has no BOM-based claim to make about
-                        // it at all - and a warning on every hand-pinned transitive version would
-                        // be the loudest possible noise in exactly the projects that have most of
-                        // them. All three stay visible in the tool window.
-                        OverrideVerdict.AHEAD_OF_BOM,
-                        OverrideVerdict.NOT_COMPARABLE,
-                        OverrideVerdict.UNMANAGED -> Unit
-                    }
+                    registerProblemIfAny(holder, result)
                 }
             }
+        }
+
+    /**
+     * An expression-bodied `when` over [OverrideVerdict], not a `when` used as a bare
+     * statement: the compiler only enforces exhaustiveness on a sealed-type/enum `when`
+     * when its value is actually used, so a future new [OverrideVerdict] case would
+     * otherwise compile silently here and register no problem for it - one enum value
+     * mapping to "say nothing" by omission instead of by the explicit branch below.
+     */
+    private fun registerProblemIfAny(holder: ProblemsHolder, result: DetectedOverride): Unit =
+        when (verdictOf(result)) {
+            // Redundant: the BOM caught up, so removal is the whole point.
+            // Behind the BOM: removing the pin raises the version to the BOM's,
+            // which is the desired outcome - such a pin is nearly always one set
+            // once and never revisited, now holding the dependency below what the
+            // BOM already ships. The message says so explicitly, so the fix isn't
+            // a silent build-affecting change.
+            OverrideVerdict.REDUNDANT, OverrideVerdict.BEHIND_BOM -> holder.registerProblem(
+                result.candidate.versionXmlTag,
+                verdictExplanation(result),
+                ProblemHighlightType.WEAK_WARNING,
+                RemoveOverrideQuickFix(),
+                SuppressOverrideQuickFix()
+            )
+            OverrideVerdict.INCONCLUSIVE -> holder.registerProblem(
+                result.candidate.versionXmlTag,
+                verdictExplanation(result),
+                ProblemHighlightType.WEAK_WARNING,
+                SuppressOverrideQuickFix()
+            )
+            // Silent on purpose. AHEAD_OF_BOM is a pin that is still doing its
+            // job - warning about it is noise. NOT_COMPARABLE reached no verdict,
+            // so there is nothing to say. UNMANAGED is not an override of anything
+            // the BOM chain says, so the editor has no BOM-based claim to make about
+            // it at all - and a warning on every hand-pinned transitive version would
+            // be the loudest possible noise in exactly the projects that have most of
+            // them. All three stay visible in the tool window.
+            OverrideVerdict.AHEAD_OF_BOM,
+            OverrideVerdict.NOT_COMPARABLE,
+            OverrideVerdict.UNMANAGED -> Unit
         }
 }

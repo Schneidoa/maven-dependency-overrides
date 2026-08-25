@@ -5,6 +5,28 @@
 ## Unreleased
 
 ### Added
+- The Override Overview toolbar has a **Filter by Status** button: check or uncheck any of
+  the six statuses to show only matching rows. The filter stays applied across Refresh, and
+  a note above the table says how many rows it's currently hiding.
+
+## 0.0.6 - 2026-08-24
+
+### Changed
+- Updated the vendor contact email address in the plugin metadata.
+
+## 0.0.5 - 2026-08-24
+
+### Changed
+- Reverted the "hide the results table when every override depends on an unresolved
+  `${...}` property" behavior shipped in 0.0.4. In real large projects (internal BOMs
+  imported at `${revision}`, modules Maven never imported) it hid the panel
+  permanently rather than only before a first sync, which made the panel less useful
+  than always showing its rows and letting incomplete `${...} → ?` entries speak for
+  themselves. The Override Overview now always shows its table.
+
+## 0.0.4 - 2026-08-20
+
+### Added
 - Overrides that no BOM in the module's chain manages are now listed in the Override Overview
   with a **Not managed by BOM** status, instead of being dropped from the results. This is the
   shape of the most common hand-written pin there is — an artifact pulled in transitively, and
@@ -13,6 +35,19 @@
   still needed: that depends on the resolved dependency tree, not on the BOM chain, and
   **Analyze Dependencies** on the row is the way to check. The editor inspection stays silent
   about them, like it already does for overrides above the BOM version.
+
+### Changed
+- The Override Overview no longer presents a table built entirely from unresolved `${...}`
+  versions. Before Maven has resolved a project's properties, a property-declared override — or
+  a BOM imported at a property version — becomes a `${foo.version} → ?` row that disappears again
+  on the next refresh, so a whole page of confident-looking findings could be an artifact of the
+  sync not having run. When every override found is in that state the panel now explains it and
+  points at Refresh; when only some are, the table is still shown with a note saying how many
+  rows are incomplete. The check looks at the rows themselves rather than at Maven's
+  initialization flag, so a project that simply isn't a Maven import keeps its overview.
+  Reverted in 0.0.5.
+
+## 0.0.3 - 2026-08-14
 
 ### Changed
 - The Add Override dialog opens wider so a full groupId and the "currently managed at …"

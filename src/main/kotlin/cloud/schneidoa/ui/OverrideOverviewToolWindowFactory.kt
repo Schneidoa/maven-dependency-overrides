@@ -32,11 +32,14 @@ import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleUtilCore
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
+import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.table.JBTable
+import com.intellij.util.ui.JBUI
 import org.jetbrains.idea.maven.dom.MavenDomUtil
 import org.jetbrains.idea.maven.dom.model.MavenDomProjectModel
 import org.jetbrains.idea.maven.project.MavenProjectsManager
@@ -46,6 +49,8 @@ import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicInteger
+import javax.swing.BoxLayout
+import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JPopupMenu
@@ -69,12 +74,28 @@ private val COLUMNS = arrayOf("Module", "Dependency", "Declared → Managed", "M
 
 private class OverrideOverviewPanel(private val project: Project) {
     private val scanner = ProjectOverrideScanner()
+
+    /**
+     * Every row the last scan found, before the status filter. [currentEntries] /
+     * [mavenSyncedRows] are the filtered projection of these two that the table actually
+     * shows - [applyFilter] rebuilds them (and the table) from here whenever either the
+     * scan result or [activeVerdicts] changes, so a filter the user set stays applied
+     * across a Refresh instead of resetting.
+     */
+    private var allEntries: List<ProjectOverrideEntry> = emptyList()
+
+    /** Parallel to [allEntries]; see [mavenSyncedRows] for what the values mean. */
+    private var allSyncedRows: List<Boolean> = emptyList()
+
+    /** Which verdicts the Filter by Status popup currently shows. All of them by default. */
+    private val activeVerdicts: MutableSet<OverrideVerdict> = OverrideVerdict.entries.toMutableSet()
+
     private var currentEntries: List<ProjectOverrideEntry> = emptyList()
 
     /**
      * Whether row N's module has a resolved [org.jetbrains.idea.maven.project.MavenProject],
-     * parallel to [currentEntries] and always replaced together with it in [populate]. This is
-     * computed in [refresh], off the EDT, because the first `MavenProjectsManager.findProject`
+     * parallel to [currentEntries] and always replaced together with it in [applyFilter]. This
+     * is computed in [refresh], off the EDT, because the first `MavenProjectsManager.findProject`
      * call after startup can lazily deserialize the cached projects tree from disk - not safe to
      * do from [showContextMenu], which runs on the EDT. A boolean captured at the last refresh
      * can go stale if a Maven sync completes afterward, but that's the same staleness this panel
@@ -96,10 +117,20 @@ private class OverrideOverviewPanel(private val project: Project) {
     }
     private val offlineNotice = JLabel().apply { isVisible = false }
 
+    /** How many of [allEntries] the active status filter is currently hiding, if any. */
+    private val filterNotice = JLabel().apply { isVisible = false }
+
+    /** Two independent notices that can both apply at once, so they stack rather than share a slot. */
+    private val notices = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        add(filterNotice)
+        add(offlineNotice)
+    }
+
     val component: JPanel = JPanel(BorderLayout()).apply {
         add(createToolbar().component, BorderLayout.NORTH)
         add(JBScrollPane(table), BorderLayout.CENTER)
-        add(offlineNotice, BorderLayout.SOUTH)
+        add(notices, BorderLayout.SOUTH)
     }
 
     init {
@@ -164,10 +195,53 @@ private class OverrideOverviewPanel(private val project: Project) {
         ) {
             override fun actionPerformed(e: AnActionEvent) = openAddDialog()
         }
-        val group = DefaultActionGroup(refreshAction, addAction)
+        val filterAction = object : AnAction(
+            "Filter by Status",
+            "Show only overrides whose status is checked",
+            AllIcons.General.Filter
+        ) {
+            override fun actionPerformed(e: AnActionEvent) = showFilterPopup(e)
+        }
+        val group = DefaultActionGroup(refreshAction, addAction, filterAction)
         return ActionManager.getInstance().createActionToolbar(ActionPlaces.TOOLBAR, group, true).apply {
             targetComponent = table
         }
+    }
+
+    /**
+     * A plain component popup with real checkboxes, not a `DefaultActionGroup`/`ToggleAction`
+     * popup: whether a checkable action item keeps a popup open across repeated clicks (needed
+     * here, since checking several statuses in one go is the point) depends on platform-version
+     * behavior this project has no way to verify without a running IDE, whereas a checkbox
+     * inside a plain hosted component never closes its popup on its own regardless of platform
+     * version - only dismissing the popup itself (click-away, Escape) does.
+     */
+    private fun showFilterPopup(e: AnActionEvent) {
+        val panel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            border = JBUI.Borders.empty(4)
+        }
+        for (verdict in OverrideVerdict.entries) {
+            panel.add(
+                JBCheckBox(filterLabelFor(verdict), verdict in activeVerdicts).apply {
+                    addActionListener {
+                        if (isSelected) activeVerdicts += verdict else activeVerdicts -= verdict
+                        applyFilter()
+                    }
+                }
+            )
+        }
+
+        val popup = JBPopupFactory.getInstance()
+            .createComponentPopupBuilder(panel, null)
+            .setRequestFocus(true)
+            .setResizable(false)
+            .createPopup()
+        // Anchored under the toolbar button that was clicked when there is one (the normal
+        // case); falls back to the platform's own placement for a keyboard-triggered
+        // invocation, which carries no mouse-sourced component to anchor under.
+        val anchor = e.inputEvent?.component as? JComponent
+        if (anchor != null) popup.showUnderneathOf(anchor) else popup.showInBestPositionFor(e.dataContext)
     }
 
     fun refresh() {
@@ -197,7 +271,12 @@ private class OverrideOverviewPanel(private val project: Project) {
             // findProject can lazily deserialize the cached projects tree from disk the first
             // time it's called - see the mavenSyncedRows KDoc.
             val syncedRows = try {
-                entries.map { entry -> MavenProjectsManager.getInstance(project).findProject(entry.pomFile) != null }
+                // Looked up once per distinct pom.xml, not once per row: a module with
+                // several flagged overrides would otherwise repeat the exact same
+                // findProject call once per row it contributes.
+                val syncedByFile = entries.map { it.pomFile }.distinct()
+                    .associateWith { MavenProjectsManager.getInstance(project).findProject(it) != null }
+                entries.map { entry -> syncedByFile.getValue(entry.pomFile) }
             } catch (e: Throwable) {
                 logger.warn("Failed to determine Maven sync status for scanned overrides", e)
                 entries.map { false }
@@ -224,12 +303,14 @@ private class OverrideOverviewPanel(private val project: Project) {
         syncedRows: List<Boolean>,
         offline: Boolean
     ) {
-        currentEntries = entries
-        mavenSyncedRows = syncedRows
+        allEntries = entries
+        allSyncedRows = syncedRows
         // One message for the whole table rather than a per-row explanation: the cause is
         // global (Maven's offline setting), and repeating it on every Inconclusive row would
         // bury it rather than surface it. This is also why the reason is not threaded through
-        // DetectedOverride - every row would end up saying the same sentence.
+        // DetectedOverride - every row would end up saying the same sentence. Read off the full,
+        // unfiltered scan: whether Maven is offline is unrelated to what the status filter is
+        // currently showing, so a hidden Inconclusive row must still be able to explain itself.
         val anyInconclusive = entries.any { verdictOf(it.override) == OverrideVerdict.INCONCLUSIVE }
         offlineNotice.isVisible = offline && anyInconclusive
         offlineNotice.text = if (offlineNotice.isVisible) {
@@ -237,8 +318,34 @@ private class OverrideOverviewPanel(private val project: Project) {
         } else {
             ""
         }
+        applyFilter()
+    }
+
+    /**
+     * Rebuilds [currentEntries]/[mavenSyncedRows] and the table from [allEntries]/
+     * [allSyncedRows], keeping only the rows whose verdict is in [activeVerdicts]. Called both
+     * after every [populate] and on every checkbox toggle in [showFilterPopup], so the filter
+     * applies immediately and stays applied across the next Refresh. No `TableRowSorter`/
+     * `RowFilter` involved on purpose: the table is rebuilt from a smaller list instead of
+     * having rows hidden underneath it, so every other row-index lookup in this class (the
+     * double-click handler, the context menu, [VerdictCellRenderer]) keeps indexing into
+     * [currentEntries] by view row with no view-to-model translation needed anywhere.
+     */
+    private fun applyFilter() {
+        val kept = allEntries.indices.filter { verdictOf(allEntries[it].override) in activeVerdicts }
+        currentEntries = kept.map { allEntries[it] }
+        mavenSyncedRows = kept.map { allSyncedRows[it] }
+
+        val hiddenCount = allEntries.size - currentEntries.size
+        filterNotice.isVisible = hiddenCount > 0
+        filterNotice.text = if (filterNotice.isVisible) {
+            "$hiddenCount override${if (hiddenCount == 1) "" else "s"} hidden by the status filter."
+        } else {
+            ""
+        }
+
         tableModel.rowCount = 0
-        for (entry in entries) {
+        for (entry in currentEntries) {
             tableModel.addRow(
                 arrayOf(
                     entry.moduleLabel,
@@ -414,8 +521,28 @@ private class OverrideOverviewPanel(private val project: Project) {
 
     private fun openAddDialog() {
         ApplicationManager.getApplication().executeOnPooledThread {
-            val modules = ReadAction.compute<List<ModuleChoice>, Throwable> { findAddOverrideModules(project) }
+            // Unlike every other action in this class, this used to have no try/catch at
+            // all around its ReadAction.compute: a throw here (e.g. a PSI/VFS hiccup while
+            // indexing) propagated out of executeOnPooledThread uncaught, so clicking "Add"
+            // would silently do nothing with no error ever shown.
+            val modules = try {
+                ReadAction.compute<List<ModuleChoice>, Throwable> { findAddOverrideModules(project) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                logger.warn("Failed to load this project's modules for the Add dialog", e)
+                null
+            }
+
             SwingUtilities.invokeLater {
+                if (modules == null) {
+                    Messages.showErrorDialog(
+                        project,
+                        "Could not load this project's modules. Try refreshing and retrying.",
+                        "Add Failed"
+                    )
+                    return@invokeLater
+                }
                 val dialog = AddOverrideDialog(project, modules)
                 try {
                     if (!dialog.showAndGet()) return@invokeLater
@@ -463,6 +590,20 @@ private class OverrideOverviewPanel(private val project: Project) {
             return this
         }
     }
+}
+
+/**
+ * Static per-verdict label for the status filter's checkboxes - deliberately not
+ * [verdictLabel], which bakes in a per-instance count ("Inconclusive (3 POMs unchecked)")
+ * that names one row's evidence and has no meaning for a checkbox naming the whole category.
+ */
+private fun filterLabelFor(verdict: OverrideVerdict): String = when (verdict) {
+    OverrideVerdict.REDUNDANT -> "Redundant"
+    OverrideVerdict.AHEAD_OF_BOM -> "Ahead of BOM"
+    OverrideVerdict.BEHIND_BOM -> "Behind BOM"
+    OverrideVerdict.NOT_COMPARABLE -> "Not comparable"
+    OverrideVerdict.INCONCLUSIVE -> "Inconclusive"
+    OverrideVerdict.UNMANAGED -> "Not managed by BOM"
 }
 
 private fun iconFor(verdict: OverrideVerdict) = when (verdict) {

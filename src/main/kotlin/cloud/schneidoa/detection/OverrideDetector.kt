@@ -5,7 +5,7 @@ import cloud.schneidoa.resolver.Gav
 import cloud.schneidoa.resolver.ManagedVersionLookup
 import cloud.schneidoa.resolver.VersionRelation
 import cloud.schneidoa.resolver.compareDeclaredToManaged
-import cloud.schneidoa.resolver.uncheckedBoms
+import cloud.schneidoa.resolver.plusUnchecked
 import com.intellij.openapi.project.Project
 import org.jetbrains.idea.maven.dom.model.MavenDomProjectModel
 import org.jetbrains.idea.maven.project.MavenProjectsManager
@@ -75,22 +75,30 @@ class OverrideDetector(private val bomVersionResolver: BomVersionResolver) {
 
     fun detect(model: MavenDomProjectModel, project: Project): List<DetectedOverride> {
         val bomChain = bomChainResolver.resolveBomChain(model, project)
+        // Hoisted out of evaluate(): bomChain is the same for every candidate in this
+        // module, so this projection is otherwise rebuilt once per candidate (twice for
+        // an Unmanaged one) for no reason - wasted allocation on the editor's
+        // per-keystroke inspection hot path, worse the larger the chain (a Spring Boot
+        // chain can hold on the order of 1000+ entries).
+        val bomGavs = bomChain.imports.map { it.bom }
 
         return DependencyManagementScanner.scan(model)
             .filterNot { it.suppressed }
-            .mapNotNull { candidate -> evaluate(candidate, bomChain) }
+            .mapNotNull { candidate -> evaluate(candidate, bomChain, bomGavs) }
     }
 
-    private fun evaluate(candidate: OverrideCandidate, bomChain: BomChain): DetectedOverride? {
-        val lookup = bomVersionResolver.resolveManagedVersion(bomChain.imports.map { it.bom }, candidate.ga)
+    private fun evaluate(candidate: OverrideCandidate, bomChain: BomChain, bomGavs: List<Gav>): DetectedOverride? {
         // A parent we could not read is exactly as disqualifying as a BOM we could not read:
-        // both mean the chain we searched was not the whole chain.
-        val unchecked = lookup.uncheckedBoms() + bomChain.truncatedAt
+        // both mean the chain we searched was not the whole chain. plusUnchecked is the same
+        // merge ManagedVersionHint uses for the identical fold, applied right at the source
+        // rather than re-derived here, so the two can't drift apart.
+        val lookup = bomVersionResolver.resolveManagedVersion(bomGavs, candidate.ga)
+            .plusUnchecked(bomChain.truncatedAt)
 
         return when (lookup) {
             is ManagedVersionLookup.Found ->
-                if (unchecked.isNotEmpty()) {
-                    DetectedOverride.Inconclusive(candidate, unchecked)
+                if (lookup.uncheckedBoms.isNotEmpty()) {
+                    DetectedOverride.Inconclusive(candidate, lookup.uncheckedBoms)
                 } else {
                     // Equal versions are reported too, not filtered out: a pin the BOM has
                     // exactly caught up to is the redundant one this plugin exists to find.
@@ -106,11 +114,10 @@ class OverrideDetector(private val bomVersionResolver: BomVersionResolver) {
                 }
             is ManagedVersionLookup.NotFound ->
                 when {
-                    unchecked.isNotEmpty() -> DetectedOverride.Inconclusive(candidate, unchecked)
+                    lookup.uncheckedBoms.isNotEmpty() -> DetectedOverride.Inconclusive(candidate, lookup.uncheckedBoms)
                     // A readable chain that manages this artifact nowhere: the pin acts on
                     // transitive resolution rather than on a BOM. Reported, not dropped.
-                    bomChain.imports.isNotEmpty() ->
-                        DetectedOverride.Unmanaged(candidate, bomChain.imports.map { it.bom })
+                    bomChain.imports.isNotEmpty() -> DetectedOverride.Unmanaged(candidate, bomGavs)
                     // No BOM anywhere in the chain, so there is nothing here to override in the
                     // first place - every literal-version <dependencyManagement> entry in the
                     // module would otherwise be reported, turning a plain dependency-management

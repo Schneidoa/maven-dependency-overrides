@@ -91,49 +91,69 @@ class RemotePomFetcher(private val project: Project) {
         // The (Key, workingDirectory) overload rather than (MavenProject, Key): it needs no
         // synced MavenProject, which is what makes this work on a fresh checkout - the case
         // this feature most needs to serve.
+        //
+        // getEmbedder() itself, and the final "what actually landed on disk" check below, now
+        // live inside the same try/catch as the resolveArtifacts call, not just wrapped around
+        // it - so a failure anywhere in this method (a broken Maven-home configuration, an
+        // exhausted embedder pool, a VFS refresh hiccup) degrades to emptySet() like every other
+        // failure here, rather than escaping uncaught. An uncaught exception used to propagate
+        // straight through resolvingMissingPoms's unguarded `fetcher(toFetch)` call and be caught
+        // only by the tool window's outermost catch-all, which discards the whole scan's
+        // already-valid results instead of just leaving this one round's fetch empty.
         val embeddersManager = manager.embeddersManager
-        val embedder = embeddersManager.getEmbedder(MavenEmbeddersManager.FOR_DEPENDENCIES_RESOLVE, basePath)
-        try {
-            // The ProgressManager wrapper is NOT redundant - do not remove it. runBlockingCancellable
-            // logs an IDE error when the calling thread has neither a ProgressIndicator nor a Job:
-            // CoroutinesKt.runBlockingCancellable reaches
-            // LOG.error(IllegalStateException("There is no ProgressIndicator or Job in this thread,
-            // the current job is not cancellable.")). The fetch still completes, which is exactly
-            // why it looks removable - but in a released IDE Logger.error raises the red "IDE
-            // internal error - Report to JetBrains" balloon naming this plugin, on every use of the
-            // headline feature, and in tests it fails the test outright (TestLoggerFactory turns
-            // logged errors into failures, which this project deliberately keeps on).
-            //
-            // Verified against the pinned 2026.2.1 bytecode (lib/intellij.platform.core.jar):
-            // ContextKt.prepareThreadContext calls ProgressManager.getGlobalProgressIndicator()
-            // first and only falls through to the no-Job check when that is null, and
-            // CoreProgressManager.runProcess -> executeProcessUnderProgress installs the indicator
-            // on this thread for the duration of the call. ApplicationImpl.executeOnPooledThread
-            // passes withContextJob = false and several call sites submit from plain AWT dispatch,
-            // so without this there is neither an indicator nor a Job here.
-            //
-            // A fresh EmptyProgressIndicator per call, never a shared one: CoreProgressManager
-            // .runProcess asserts no other thread is already running under the indicator it is
-            // given. runBlockingMaybeCancellable would also silence the error but is @Deprecated as
-            // platform-internal; indicatorRunBlockingCancellable is @Deprecated for the same reason.
-            // Both ProgressManager.runProcess and EmptyProgressIndicator's constructor are only
-            // @ApiStatus.Obsolete, which verifyPlugin accepts - see the class comment above for the
-            // same trade-off around MavenEmbeddersManager.
-            //
-            // Skipped when an indicator is already installed, rather than wrapping unconditionally:
-            // prepareThreadContext is already satisfied in that case, and installing a second
-            // indicator would replace the caller's, so cancelling the outer progress would no
-            // longer reach this fetch. (runProcess starts and stops the indicator it is given, so
-            // re-installing the existing one is not an option either.)
-            val resolve = Runnable {
-                runBlockingCancellable {
-                    embedder.resolveArtifacts(requests, null, MavenLogEventHandler)
+        return try {
+            val embedder = embeddersManager.getEmbedder(MavenEmbeddersManager.FOR_DEPENDENCIES_RESOLVE, basePath)
+            try {
+                // The ProgressManager wrapper is NOT redundant - do not remove it. runBlockingCancellable
+                // logs an IDE error when the calling thread has neither a ProgressIndicator nor a Job:
+                // CoroutinesKt.runBlockingCancellable reaches
+                // LOG.error(IllegalStateException("There is no ProgressIndicator or Job in this thread,
+                // the current job is not cancellable.")). The fetch still completes, which is exactly
+                // why it looks removable - but in a released IDE Logger.error raises the red "IDE
+                // internal error - Report to JetBrains" balloon naming this plugin, on every use of the
+                // headline feature, and in tests it fails the test outright (TestLoggerFactory turns
+                // logged errors into failures, which this project deliberately keeps on).
+                //
+                // Verified against the pinned 2026.2.1 bytecode (lib/intellij.platform.core.jar):
+                // ContextKt.prepareThreadContext calls ProgressManager.getGlobalProgressIndicator()
+                // first and only falls through to the no-Job check when that is null, and
+                // CoreProgressManager.runProcess -> executeProcessUnderProgress installs the indicator
+                // on this thread for the duration of the call. ApplicationImpl.executeOnPooledThread
+                // passes withContextJob = false and several call sites submit from plain AWT dispatch,
+                // so without this there is neither an indicator nor a Job here.
+                //
+                // A fresh EmptyProgressIndicator per call, never a shared one: CoreProgressManager
+                // .runProcess asserts no other thread is already running under the indicator it is
+                // given. runBlockingMaybeCancellable would also silence the error but is @Deprecated as
+                // platform-internal; indicatorRunBlockingCancellable is @Deprecated for the same reason.
+                // Both ProgressManager.runProcess and EmptyProgressIndicator's constructor are only
+                // @ApiStatus.Obsolete, which verifyPlugin accepts - see the class comment above for the
+                // same trade-off around MavenEmbeddersManager.
+                //
+                // Skipped when an indicator is already installed, rather than wrapping unconditionally:
+                // prepareThreadContext is already satisfied in that case, and installing a second
+                // indicator would replace the caller's, so cancelling the outer progress would no
+                // longer reach this fetch. (runProcess starts and stops the indicator it is given, so
+                // re-installing the existing one is not an option either.)
+                val resolve = Runnable {
+                    runBlockingCancellable {
+                        embedder.resolveArtifacts(requests, null, MavenLogEventHandler)
+                    }
                 }
-            }
-            if (ProgressIndicatorProvider.getGlobalProgressIndicator() != null) {
-                resolve.run()
-            } else {
-                ProgressManager.getInstance().runProcess(resolve, EmptyProgressIndicator())
+                if (ProgressIndicatorProvider.getGlobalProgressIndicator() != null) {
+                    resolve.run()
+                } else {
+                    ProgressManager.getInstance().runProcess(resolve, EmptyProgressIndicator())
+                }
+
+                // Success is decided by what is on disk, not by MavenArtifact.isResolved(): we asked
+                // for packaging "pom", and isResolved()'s notion of resolved is about the primary
+                // artifact file, which is not the question we need answered.
+                val landed = fetchable.associateWith { it.pomFileIn(localRepositoryDir) }.filterValues { it.isFile }
+                LocalFileSystem.getInstance().refreshIoFiles(landed.values)
+                landed.keys
+            } finally {
+                embeddersManager.release(embedder)
             }
         } catch (e: CancellationException) {
             // Must come before the broad catch below: runBlockingCancellable rethrows
@@ -146,20 +166,12 @@ class RemotePomFetcher(private val project: Project) {
             throw e
         } catch (e: Exception) {
             // Deliberately broad, matching BomEffectiveModelResolver's reflex for everything
-            // that is not cancellation: one unreachable repository or one malformed coordinate
-            // must degrade to "could not fetch" for the whole batch, never propagate into a
-            // tool window refresh or a dialog load.
+            // that is not cancellation: one unreachable repository, one malformed coordinate, or
+            // getEmbedder() itself failing must degrade to "could not fetch" for the whole batch,
+            // never propagate into a tool window refresh or a dialog load.
             logger.warn("Failed to fetch ${fetchable.size} POM(s) from remote repositories", e)
-        } finally {
-            embeddersManager.release(embedder)
+            emptySet()
         }
-
-        // Success is decided by what is on disk, not by MavenArtifact.isResolved(): we asked for
-        // packaging "pom", and isResolved()'s notion of resolved is about the primary artifact
-        // file, which is not the question we need answered.
-        val landed = fetchable.associateWith { it.pomFileIn(localRepositoryDir) }.filterValues { it.isFile }
-        LocalFileSystem.getInstance().refreshIoFiles(landed.values)
-        return landed.keys
     }
 
     private companion object {

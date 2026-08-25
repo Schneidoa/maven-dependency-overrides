@@ -57,6 +57,22 @@ private class SimpleDocumentListener(private val onChange: () -> Unit) : Documen
     override fun changedUpdate(e: DocumentEvent) = onChange()
 }
 
+/**
+ * Qualifies a raw [ManagedVersionLookup] answer with how many BOMs in the chain could
+ * not be read: the lookup's own contract is that "not found" (and even "found", since a
+ * higher-precedence unchecked BOM could outrank the one that matched) is not a confident
+ * answer once any BOM in the chain could not be read. Shared between [AddOverrideDialog]
+ * (whose fallback hint fires when the full catalog itself could not be built) and
+ * [EditOverrideDialog] (whose hint has no catalog to fall back from at all - this is its
+ * only source), so both dialogs hedge the same lookup identically instead of one of them
+ * silently presenting an unconfirmed answer as fact.
+ */
+internal fun withUncheckedSuffix(text: String, uncheckedCount: Int): String {
+    if (uncheckedCount == 0) return text
+    val plural = if (uncheckedCount == 1) "" else "s"
+    return "$text — $uncheckedCount BOM$plural could not be read, so this may not be conclusive"
+}
+
 class AddOverrideDialog internal constructor(
     private val project: Project,
     modules: List<ModuleChoice>,
@@ -158,7 +174,14 @@ class AddOverrideDialog internal constructor(
     }
 
     private fun updateOkEnabled() {
-        isOKActionEnabled = parseGa() != null && versionField.text.isNotBlank()
+        // moduleCombo.selectedItem is checked explicitly, not just parseGa()/versionField:
+        // in a project with no discoverable/parseable pom.xml, modules is empty and the
+        // combo has nothing selected, but the plain text fields stay freely editable.
+        // Without this check OK could enable itself from typing alone, and doOKAction's
+        // `moduleCombo.selectedItem as? ModuleChoice ?: return` would then silently do
+        // nothing at all when clicked - no override added, no error, dialog stays open.
+        isOKActionEnabled =
+            moduleCombo.selectedItem is ModuleChoice && parseGa() != null && versionField.text.isNotBlank()
     }
 
     private fun parseGa(): Ga? {
@@ -213,6 +236,11 @@ class AddOverrideDialog internal constructor(
             }
             return
         }
+        // The catalog is loaded now, so any debounce armed while it was still loading is
+        // stale: left running, it would fire loadHint() after this method already shows
+        // the correct, verdict-bearing hint below, clobbering it with loadHint's plainer
+        // "Currently managed at X" (no comparison against what's typed).
+        hintDebounce.stop()
 
         val guidance = dependencyEntryHint(available, parseGa(), versionField.text.trim(), versionEditedByUser)
         guidance.prefillVersion?.let { prefillVersion(it) }
@@ -256,20 +284,6 @@ class AddOverrideDialog internal constructor(
                 if (generation == hintGeneration.get()) hintLabel.text = text
             }
         }
-    }
-
-    /**
-     * Qualifies a [loadHint] answer the same way the catalog-loaded hint qualifies its
-     * suggestions: [ManagedVersionLookup]'s own contract is that "not found" (and even
-     * "found", since a higher-precedence unchecked BOM could outrank the one that
-     * matched) is not a confident answer once any BOM in the chain could not be read.
-     * This fallback path fires disproportionately in exactly that situation, since it
-     * is what runs when the full catalog itself could not be built.
-     */
-    private fun withUncheckedSuffix(text: String, uncheckedCount: Int): String {
-        if (uncheckedCount == 0) return text
-        val plural = if (uncheckedCount == 1) "" else "s"
-        return "$text — $uncheckedCount BOM$plural could not be read, so this may not be conclusive"
     }
 
     /**

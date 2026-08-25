@@ -47,6 +47,36 @@ class DependencyEntryHintTest {
         assertEquals("2.15.3", second.prefillVersion)
     }
 
+    // The field holds a previous prefill (widget-core's managed "4.2.0") and the user
+    // then switches to a coordinate the chain doesn't manage at all, without ever
+    // having typed into the version field themselves. Leaving "4.2.0" sitting there
+    // would read as if it still meant something for the new, unmanaged coordinate.
+    @Test
+    fun `prefill clears a previous prefill when the newly entered coordinate is not managed`() {
+        val candidates = candidatesWith()
+
+        val first = dependencyEntryHint(candidates, widgetCore, declaredVersion = "", versionEditedByUser = false)
+        assertEquals("4.2.0", first.prefillVersion)
+
+        val second = dependencyEntryHint(
+            candidates,
+            unmanaged,
+            declaredVersion = first.prefillVersion!!,
+            versionEditedByUser = false
+        )
+
+        assertEquals("", second.prefillVersion)
+    }
+
+    // Same switch, but the user had typed the version themselves - nothing here
+    // belongs to prefill logic anymore, so it must not be touched, let alone cleared.
+    @Test
+    fun `does not clear a version the user typed themselves when switching to an unmanaged coordinate`() {
+        val result = dependencyEntryHint(candidatesWith(), unmanaged, "9.9.9", versionEditedByUser = true)
+
+        assertNull(result.prefillVersion)
+    }
+
     @Test
     fun `does not prefill once the user has edited the version field`() {
         val result = dependencyEntryHint(candidatesWith(), jacksonDatabind, "", versionEditedByUser = true)
