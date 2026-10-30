@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+## 0.0.8 - 2026-10-30
+
 ### Changed
 
 - Detection now has Maven build each module itself, the same way a real build does, instead of
