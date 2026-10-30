@@ -4,21 +4,15 @@
 
 ## Unreleased
 
-## 0.0.7 - 2026-08-25
-
-### Added
-
-- The Override Overview toolbar has a **Filter by Status** button: check or uncheck any of
-  the six statuses to show only matching rows. The filter stays applied across Refresh, and
-  a note above the table says how many rows it's currently hiding.
-
 ### Changed
+
 - Detection now has Maven build each module itself, the same way a real build does, instead of
   reading its POMs one at a time. Maven sync is no longer needed for correct results.
 - Replaced deprecated and experimental IntelliJ Platform API usages reported by the
   Marketplace compatibility verification.
 
 ### Fixed
+
 - Overrides of a version a parent manages directly are now recognized. With
   `spring-boot-starter-parent` as `<parent>`, most of what Spring Boot manages was shown as
   "Not managed by BOM", and without any BOM such overrides were not listed at all.
@@ -32,7 +26,15 @@
   treated as a BOM that manages nothing.
 - Deep BOM and parent chains are now downloaded completely instead of stopping after two levels.
 - The Override Overview no longer stays empty when it is opened during indexing, and one POM that
-  can't be analyzed no longer empties it for the whole project. Such a POM is named in a notice.
+  can't be analyzed no longer empties it for the whole project. A notice says how many were skipped.
+
+## 0.0.7 - 2026-08-25
+
+### Added
+
+- The Override Overview toolbar has a **Filter by Status** button: check or uncheck any of
+  the six statuses to show only matching rows. The filter stays applied across Refresh, and
+  a note above the table says how many rows it's currently hiding.
 
 ## 0.0.6 - 2026-08-24
 
