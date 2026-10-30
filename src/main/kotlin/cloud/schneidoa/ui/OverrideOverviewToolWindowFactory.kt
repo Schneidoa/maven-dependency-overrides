@@ -30,9 +30,12 @@ import com.intellij.openapi.externalSystem.dependency.analyzer.DAArtifact
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleUtilCore
+import com.intellij.openapi.project.DumbService
+import com.intellij.openapi.project.IndexNotReadyException
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.components.JBCheckBox
@@ -48,6 +51,7 @@ import java.awt.Component
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.util.concurrent.CancellationException
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.BoxLayout
 import javax.swing.JComponent
@@ -120,11 +124,14 @@ private class OverrideOverviewPanel(private val project: Project) {
     /** How many of [allEntries] the active status filter is currently hiding, if any. */
     private val filterNotice = JLabel().apply { isVisible = false }
 
-    /** Two independent notices that can both apply at once, so they stack rather than share a slot. */
+    private val failedPomsNotice = JLabel().apply { isVisible = false }
+
+    /** Independent notices that can all apply at once, so they stack rather than share a slot. */
     private val notices = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
         add(filterNotice)
         add(offlineNotice)
+        add(failedPomsNotice)
     }
 
     val component: JPanel = JPanel(BorderLayout()).apply {
@@ -245,10 +252,25 @@ private class OverrideOverviewPanel(private val project: Project) {
     }
 
     fun refresh() {
+        // FilenameIndex is unavailable while indexing, which on a large project is where the tool
+        // window spends its first minutes. Without this the scan throws, the catch below shows an
+        // empty table, and nothing ever fills it in.
+        if (DumbService.isDumb(project)) {
+            DumbService.getInstance(project).runWhenSmart { refresh() }
+            return
+        }
         val generation = refreshGeneration.incrementAndGet()
         ApplicationManager.getApplication().executeOnPooledThread {
+            val failedPoms = ConcurrentHashMap.newKeySet<VirtualFile>()
             val entries = try {
-                resolvingMissingPoms(project) { onMissing -> scanner.scan(project, onMissing) }
+                resolvingMissingPoms(project) { onMissing ->
+                    failedPoms.clear()
+                    scanner.scan(project, onMissing) { failedPoms += it }
+                }
+            } catch (e: IndexNotReadyException) {
+                // Indexing started again after the check above. Must precede the broad catch.
+                DumbService.getInstance(project).runWhenSmart { refresh() }
+                return@executeOnPooledThread
             } catch (e: CancellationException) {
                 // Must precede the broad catch. RemotePomFetcher deliberately rethrows cancellation
                 // rather than folding it into its "could not fetch" degradation; catching it here
@@ -260,7 +282,7 @@ private class OverrideOverviewPanel(private val project: Project) {
             } catch (e: Throwable) {
                 logger.warn("Failed to scan project for dependency overrides", e)
                 SwingUtilities.invokeLater {
-                    if (generation == refreshGeneration.get()) populate(emptyList(), emptyList(), false)
+                    if (generation == refreshGeneration.get()) populate(emptyList(), emptyList(), false, 0)
                 }
                 return@executeOnPooledThread
             }
@@ -293,7 +315,7 @@ private class OverrideOverviewPanel(private val project: Project) {
             }
 
             SwingUtilities.invokeLater {
-                if (generation == refreshGeneration.get()) populate(entries, syncedRows, offline)
+                if (generation == refreshGeneration.get()) populate(entries, syncedRows, offline, failedPoms.size)
             }
         }
     }
@@ -301,10 +323,19 @@ private class OverrideOverviewPanel(private val project: Project) {
     private fun populate(
         entries: List<ProjectOverrideEntry>,
         syncedRows: List<Boolean>,
-        offline: Boolean
+        offline: Boolean,
+        failedPomCount: Int
     ) {
         allEntries = entries
         allSyncedRows = syncedRows
+        // The rows of a POM that failed are simply absent, so this is the only trace of it.
+        failedPomsNotice.isVisible = failedPomCount > 0
+        failedPomsNotice.text = if (failedPomsNotice.isVisible) {
+            "$failedPomCount pom.xml file${if (failedPomCount == 1) "" else "s"} could not be analyzed and " +
+                "${if (failedPomCount == 1) "is" else "are"} missing from this list - see the IDE log."
+        } else {
+            ""
+        }
         // One message for the whole table rather than a per-row explanation: the cause is
         // global (Maven's offline setting), and repeating it on every Inconclusive row would
         // bury it rather than surface it. This is also why the reason is not threaded through
@@ -359,7 +390,7 @@ private class OverrideOverviewPanel(private val project: Project) {
     }
 
     private fun navigateTo(entry: ProjectOverrideEntry) {
-        val offset = ReadAction.compute<Int?, Throwable> {
+        val offset = ReadAction.computeBlocking<Int?, Throwable> {
             val tag = entry.override.candidate.versionXmlTag
             if (tag.isValid) tag.textOffset else null
         } ?: return
@@ -443,7 +474,7 @@ private class OverrideOverviewPanel(private val project: Project) {
         // applies to the Maven-sync probe in refresh().
         ApplicationManager.getApplication().executeOnPooledThread {
             val module = try {
-                ReadAction.compute<Module?, Throwable> {
+                ReadAction.computeBlocking<Module?, Throwable> {
                     ModuleUtilCore.findModuleForFile(entry.pomFile, project)
                 }
             } catch (e: Throwable) {
@@ -492,7 +523,7 @@ private class OverrideOverviewPanel(private val project: Project) {
     private fun openEditDialog(entry: ProjectOverrideEntry) {
         ApplicationManager.getApplication().executeOnPooledThread {
             val model = try {
-                ReadAction.compute<MavenDomProjectModel?, Throwable> {
+                ReadAction.computeBlocking<MavenDomProjectModel?, Throwable> {
                     MavenDomUtil.getMavenDomProjectModel(project, entry.pomFile)
                 }
             } catch (e: Throwable) {
@@ -522,11 +553,11 @@ private class OverrideOverviewPanel(private val project: Project) {
     private fun openAddDialog() {
         ApplicationManager.getApplication().executeOnPooledThread {
             // Unlike every other action in this class, this used to have no try/catch at
-            // all around its ReadAction.compute: a throw here (e.g. a PSI/VFS hiccup while
+            // all around its ReadAction.computeBlocking: a throw here (e.g. a PSI/VFS hiccup while
             // indexing) propagated out of executeOnPooledThread uncaught, so clicking "Add"
             // would silently do nothing with no error ever shown.
             val modules = try {
-                ReadAction.compute<List<ModuleChoice>, Throwable> { findAddOverrideModules(project) }
+                ReadAction.computeBlocking<List<ModuleChoice>, Throwable> { findAddOverrideModules(project) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {

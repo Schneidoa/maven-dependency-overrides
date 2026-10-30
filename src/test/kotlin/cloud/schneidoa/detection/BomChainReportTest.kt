@@ -2,7 +2,9 @@ package cloud.schneidoa.detection
 
 import cloud.schneidoa.resolver.BomVersionResolver
 import cloud.schneidoa.resolver.Ga
+import cloud.schneidoa.resolver.BomImport
 import cloud.schneidoa.resolver.Gav
+import cloud.schneidoa.resolver.InheritedManagement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -19,6 +21,28 @@ class BomChainReportTest {
     private val jacksonDatabind = Ga("com.fasterxml.jackson.core", "jackson-databind")
     private val acmeBom = Gav("com.example", "acme-bom", "1.0.0")
     private val missingBom = Gav("com.example", "does-not-exist-bom", "9.9.9")
+
+    /** The dialog must explain the row that opened it, so the real manager heads the list. */
+    @Test
+    fun `an ancestor's direct entry wins over a BOM that also manages the artifact`() {
+        val parent = Gav("com.example", "parent", "1.0.0")
+
+        val report = buildBomChainReport(
+            ga = jacksonDatabind,
+            declaredVersion = "2.15.4",
+            moduleLabel = "test-module",
+            bomChain = listOf(BomImport(acmeBom, emptyList())),
+            resolver = BomVersionResolver(localRepositoryDir()),
+            inherited = InheritedManagement("9.0.0", parent, listOf("intermediate"))
+        )
+
+        val winner = report.entries[0] as BomChainEntry.Manages
+        assertEquals(parent, winner.bom)
+        assertEquals("9.0.0", winner.version)
+        assertEquals(listOf("intermediate"), winner.declaredVia)
+        assertTrue(winner.wins)
+        assertEquals(false, (report.entries[1] as BomChainEntry.Manages).wins)
+    }
 
     @Test
     fun `a BOM that manages the artifact is reported with its version and marked as winning`() {

@@ -9,6 +9,18 @@ import java.io.File
 
 class BomEffectiveModelResolverTest {
 
+    /**
+     * Read leniently, the fixture's error body is an empty model, and an empty model answers
+     * "manages nothing" with confidence. A repository's 404 page cached as a POM is the real
+     * way to get here, and it must cost a Failure rather than a false "not managed".
+     */
+    @Test
+    fun `fails when the BOM file is not a POM at all`() {
+        val result = resolver.buildEffectiveModel(Gav("com.example", "unreadable-parent", "1.0.0"))
+
+        assertTrue("expected Failure, got $result", result is BomModelResult.Failure)
+    }
+
     private lateinit var resolver: BomEffectiveModelResolver
 
     @Before
@@ -130,7 +142,7 @@ class BomEffectiveModelResolverTest {
         val reported = mutableListOf<Gav>()
         val fixtureUrl = javaClass.classLoader.getResource("fixtures/local-repo")
             ?: error("Test fixture local-repo not found on classpath")
-        val reporting = BomEffectiveModelResolver(File(fixtureUrl.toURI())) { reported += it }
+        val reporting = BomEffectiveModelResolver(File(fixtureUrl.toURI()), onMissingPom = { reported += it })
 
         val result = reporting.buildEffectiveModel(Gav("com.example", "broken-parent-bom", "1.0.0"))
 
@@ -146,7 +158,7 @@ class BomEffectiveModelResolverTest {
         val reported = mutableListOf<Gav>()
         val fixtureUrl = javaClass.classLoader.getResource("fixtures/local-repo")
             ?: error("Test fixture local-repo not found on classpath")
-        val reporting = BomEffectiveModelResolver(File(fixtureUrl.toURI())) { reported += it }
+        val reporting = BomEffectiveModelResolver(File(fixtureUrl.toURI()), onMissingPom = { reported += it })
         val missing = Gav("com.example", "does-not-exist-bom", "9.9.9")
 
         reporting.buildEffectiveModel(missing)

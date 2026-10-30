@@ -80,7 +80,7 @@ class LocalRepositoryModelResolverTest {
         val reported = mutableListOf<Gav>()
         val fixtureUrl = javaClass.classLoader.getResource("fixtures/local-repo")
             ?: error("Test fixture local-repo not found on classpath")
-        val reporting = LocalRepositoryModelResolver(File(fixtureUrl.toURI())) { reported += it }
+        val reporting = LocalRepositoryModelResolver(File(fixtureUrl.toURI()), onMissingPom = { reported += it })
 
         try {
             reporting.resolveModel("com.example", "does-not-exist-bom", "9.9.9")
@@ -97,7 +97,7 @@ class LocalRepositoryModelResolverTest {
         val reported = mutableListOf<Gav>()
         val fixtureUrl = javaClass.classLoader.getResource("fixtures/local-repo")
             ?: error("Test fixture local-repo not found on classpath")
-        val copy = LocalRepositoryModelResolver(File(fixtureUrl.toURI())) { reported += it }.newCopy()
+        val copy = LocalRepositoryModelResolver(File(fixtureUrl.toURI()), onMissingPom = { reported += it }).newCopy()
 
         try {
             copy.resolveModel("com.example", "does-not-exist-bom", "9.9.9")

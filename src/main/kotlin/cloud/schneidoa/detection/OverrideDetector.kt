@@ -1,5 +1,6 @@
 package cloud.schneidoa.detection
 
+import cloud.schneidoa.resolver.BomChain
 import cloud.schneidoa.resolver.BomVersionResolver
 import cloud.schneidoa.resolver.Gav
 import cloud.schneidoa.resolver.ManagedVersionLookup
@@ -8,7 +9,6 @@ import cloud.schneidoa.resolver.compareDeclaredToManaged
 import cloud.schneidoa.resolver.plusUnchecked
 import com.intellij.openapi.project.Project
 import org.jetbrains.idea.maven.dom.model.MavenDomProjectModel
-import org.jetbrains.idea.maven.project.MavenProjectsManager
 
 sealed class DetectedOverride {
     /**
@@ -70,10 +70,18 @@ val DetectedOverride.candidate: OverrideCandidate
 
 class OverrideDetector(private val bomVersionResolver: BomVersionResolver) {
 
-    private val bomChainResolver =
-        BomChainResolver(bomVersionResolver.localRepositoryDir, bomVersionResolver.onMissingPom)
+    private val bomChainResolver = BomChainResolver(
+        bomVersionResolver.localRepositoryDir,
+        bomVersionResolver.onMissingPom,
+        bomVersionResolver.reactorPoms
+    )
 
     fun detect(model: MavenDomProjectModel, project: Project): List<DetectedOverride> {
+        val candidates = DependencyManagementScanner.scan(model).filterNot { it.suppressed }
+        // Nothing to compare means nothing worth a model build. The inspection runs on every
+        // POM the user opens, and most modules in a reactor declare no overrides of their own.
+        if (candidates.isEmpty()) return emptyList()
+
         val bomChain = bomChainResolver.resolveBomChain(model, project)
         // Hoisted out of evaluate(): bomChain is the same for every candidate in this
         // module, so this projection is otherwise rebuilt once per candidate (twice for
@@ -82,12 +90,33 @@ class OverrideDetector(private val bomVersionResolver: BomVersionResolver) {
         // chain can hold on the order of 1000+ entries).
         val bomGavs = bomChain.imports.map { it.bom }
 
-        return DependencyManagementScanner.scan(model)
-            .filterNot { it.suppressed }
+        return candidates
+            .map { it.withInterpolatedVersion(bomChain) }
             .mapNotNull { candidate -> evaluate(candidate, bomChain, bomGavs) }
     }
 
+    /** Maven's answer, where it has one, outranks the IDE's: it needs no Maven sync to be known. */
+    private fun OverrideCandidate.withInterpolatedVersion(bomChain: BomChain): OverrideCandidate =
+        if ("\${" in declaredVersion) {
+            copy(declaredVersion = bomChain.declaredVersions[ga] ?: declaredVersion)
+        } else {
+            this
+        }
+
     private fun evaluate(candidate: OverrideCandidate, bomChain: BomChain, bomGavs: List<Gav>): DetectedOverride? {
+        // Checked before any BOM, and unaffected by a BOM that can't be read: an ancestor's plain
+        // entry beats every import in Maven's own precedence, so no unchecked BOM could change
+        // this answer. A truncated hierarchy never reaches here with entries in it.
+        bomChain.inherited[candidate.ga]?.let { inherited ->
+            return DetectedOverride.Confirmed(
+                candidate,
+                inherited.version,
+                inherited.declaredIn,
+                inherited.declaredVia,
+                compareDeclaredToManaged(candidate.declaredVersion, inherited.version)
+            )
+        }
+
         // A parent we could not read is exactly as disqualifying as a BOM we could not read:
         // both mean the chain we searched was not the whole chain. plusUnchecked is the same
         // merge ManagedVersionHint uses for the identical fold, applied right at the source
@@ -129,9 +158,6 @@ class OverrideDetector(private val bomVersionResolver: BomVersionResolver) {
 
     companion object {
         /** Convenience factory for real IDE usage — reads the local repo path IntelliJ's Maven support already knows about. */
-        fun forProject(project: Project): OverrideDetector {
-            val localRepositoryDir = MavenProjectsManager.getInstance(project).repositoryPath.toFile()
-            return OverrideDetector(BomVersionResolver(localRepositoryDir))
-        }
+        fun forProject(project: Project): OverrideDetector = OverrideDetector(bomVersionResolverFor(project))
     }
 }

@@ -9,6 +9,28 @@
   the six statuses to show only matching rows. The filter stays applied across Refresh, and
   a note above the table says how many rows it's currently hiding.
 
+### Changed
+- Detection now has Maven build each module itself, the same way a real build does, instead of
+  reading its POMs one at a time. Maven sync is no longer needed for correct results.
+- Replaced deprecated and experimental IntelliJ Platform API usages reported by the
+  Marketplace compatibility verification.
+
+### Fixed
+- Overrides of a version a parent manages directly are now recognized. With
+  `spring-boot-starter-parent` as `<parent>`, most of what Spring Boot manages was shown as
+  "Not managed by BOM", and without any BOM such overrides were not listed at all.
+- Overrides declared inside a `<profile>` are now listed, and a BOM imported by an active profile
+  (or one selected in the Maven tool window) now counts.
+- A property redefined in a child module now applies to the BOMs its parent imports, and a BOM a
+  child imports at another version replaces the parent's instead of being checked alongside it.
+- A BOM or parent that is a module of the same project no longer leaves every override depending
+  on it Inconclusive when it was never installed, including versions like `${revision}`.
+- A file in the local repository that isn't a POM, such as a cached error page, is no longer
+  treated as a BOM that manages nothing.
+- Deep BOM and parent chains are now downloaded completely instead of stopping after two levels.
+- The Override Overview no longer stays empty when it is opened during indexing, and one POM that
+  can't be analyzed no longer empties it for the whole project. Such a POM is named in a notice.
+
 ## 0.0.6 - 2026-08-24
 
 ### Changed

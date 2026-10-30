@@ -1,6 +1,7 @@
 package cloud.schneidoa.detection
 
 import cloud.schneidoa.resolver.BomVersionResolver
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.io.File
 
@@ -165,6 +166,56 @@ class ProjectOverrideScannerTest : BasePlatformTestCase() {
 
         assertEquals(1, entries.size)
         assertEquals("module-a", entries.single().moduleLabel)
+    }
+
+    /**
+     * One POM blowing up used to empty the whole tool window, which reads as "no overrides in
+     * this project". The other modules' rows must survive, and the failure must be reported,
+     * since the failed module's rows are simply absent otherwise.
+     */
+    fun `test one failing POM neither loses the other modules nor goes unreported`() {
+        fun moduleImporting(artifactId: String, bom: String) = """
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+                <modelVersion>4.0.0</modelVersion>
+                <groupId>com.example</groupId>
+                <artifactId>$artifactId</artifactId>
+                <version>1.0.0</version>
+
+                <dependencyManagement>
+                    <dependencies>
+                        <dependency>
+                            <groupId>com.example</groupId>
+                            <artifactId>$bom</artifactId>
+                            <version>1.0.0</version>
+                            <type>pom</type>
+                            <scope>import</scope>
+                        </dependency>
+                        <dependency>
+                            <groupId>com.fasterxml.jackson.core</groupId>
+                            <artifactId>jackson-databind</artifactId>
+                            <version>2.15.4</version>
+                        </dependency>
+                    </dependencies>
+                </dependencyManagement>
+            </project>
+        """.trimIndent()
+        myFixture.addFileToProject("healthy/pom.xml", moduleImporting("healthy", "acme-bom"))
+        val failing = myFixture.addFileToProject("failing/pom.xml", moduleImporting("failing", "explosive-bom"))
+        val fixtureUrl = javaClass.classLoader.getResource("fixtures/local-repo")!!
+        val scanner = ProjectOverrideScanner { _, _ ->
+            OverrideDetector(
+                BomVersionResolver(
+                    File(fixtureUrl.toURI()),
+                    onMissingPom = { check(it.artifactId != "explosive-bom") { "simulated failure" } }
+                )
+            )
+        }
+        val failed = mutableListOf<VirtualFile>()
+
+        val entries = scanner.scan(project, onPomFailed = { failed += it })
+
+        assertEquals(listOf("healthy"), entries.map { it.moduleLabel })
+        assertEquals(listOf(failing.virtualFile), failed)
     }
 
     fun `test results are ordered by module then by dependency`() {

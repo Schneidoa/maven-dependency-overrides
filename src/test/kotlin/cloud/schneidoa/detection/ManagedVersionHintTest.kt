@@ -17,6 +17,78 @@ class ManagedVersionHintTest : BasePlatformTestCase() {
         return File(fixtureUrl.toURI())
     }
 
+    /** The artifact sits directly in the parent, and the parent's value outranks the module's BOM. */
+    private fun configureChildOfParentManaging(version: String): MavenDomProjectModel {
+        myFixture.addFileToProject(
+            "parent/pom.xml",
+            """
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+                <modelVersion>4.0.0</modelVersion>
+                <groupId>com.example</groupId>
+                <artifactId>parent</artifactId>
+                <version>1.0.0</version>
+                <packaging>pom</packaging>
+                <dependencyManagement>
+                    <dependencies>
+                        <dependency>
+                            <groupId>com.fasterxml.jackson.core</groupId>
+                            <artifactId>jackson-databind</artifactId>
+                            <version>$version</version>
+                        </dependency>
+                    </dependencies>
+                </dependencyManagement>
+            </project>
+            """.trimIndent()
+        )
+        val child = myFixture.addFileToProject(
+            "child/pom.xml",
+            """
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+                <modelVersion>4.0.0</modelVersion>
+                <parent>
+                    <groupId>com.example</groupId>
+                    <artifactId>parent</artifactId>
+                    <version>1.0.0</version>
+                    <relativePath>../parent/pom.xml</relativePath>
+                </parent>
+                <artifactId>child</artifactId>
+                <dependencyManagement>
+                    <dependencies>
+                        <dependency>
+                            <groupId>com.example</groupId>
+                            <artifactId>acme-bom</artifactId>
+                            <version>1.0.0</version>
+                            <type>pom</type>
+                            <scope>import</scope>
+                        </dependency>
+                    </dependencies>
+                </dependencyManagement>
+            </project>
+            """.trimIndent()
+        )
+        return MavenDomUtil.getMavenDomProjectModel(project, child.virtualFile)!!
+    }
+
+    fun `test lookup answers with what a parent manages directly`() {
+        val model = configureChildOfParentManaging("9.0.0")
+        val hint = ManagedVersionHint(BomVersionResolver(localRepositoryDir()))
+
+        val found = hint.lookup(model, project, Ga("com.fasterxml.jackson.core", "jackson-databind"))
+            as ManagedVersionLookup.Found
+
+        assertEquals("9.0.0", found.version)
+        assertEquals(Gav("com.example", "parent", "1.0.0"), found.declaredIn)
+    }
+
+    fun `test catalog prefers what a parent manages directly over a BOM`() {
+        val model = configureChildOfParentManaging("9.0.0")
+        val hint = ManagedVersionHint(BomVersionResolver(localRepositoryDir()))
+
+        val catalog = hint.catalog(model, project)
+
+        assertEquals("9.0.0", catalog.versions[Ga("com.fasterxml.jackson.core", "jackson-databind")])
+    }
+
     private fun configureModuleImportingAcmeBom(): MavenDomProjectModel {
         val file = myFixture.configureByText(
             "pom.xml",

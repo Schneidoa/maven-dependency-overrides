@@ -1,11 +1,24 @@
 import org.jetbrains.changelog.Changelog
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask
+import org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode
 
 plugins {
     id("org.jetbrains.kotlin.jvm")
     id("org.jetbrains.changelog")
     id("org.jetbrains.intellij.platform")
+}
+
+// The default mode (ENABLE) makes every class implementing a Kotlin platform interface carry a
+// generated bridge for each inherited default method. Those bridges override and call members of
+// ToolWindowFactory this plugin never touches (isApplicable, isDoNotActivateOnStart, manage,
+// getIcon, getAnchor), which the Marketplace verifier reports as deprecated and experimental API
+// usages. Nothing here compiles against this plugin's classes, so the compatibility layer has no
+// consumer to serve.
+kotlin {
+    compilerOptions {
+        jvmDefault = JvmDefaultMode.NO_COMPATIBILITY
+    }
 }
 
 // Read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin.html

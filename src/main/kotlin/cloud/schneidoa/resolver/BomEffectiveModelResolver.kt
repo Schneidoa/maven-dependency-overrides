@@ -3,7 +3,9 @@ package cloud.schneidoa.resolver
 import org.apache.maven.model.Model
 import org.apache.maven.model.building.DefaultModelBuilderFactory
 import org.apache.maven.model.building.DefaultModelBuildingRequest
+import org.apache.maven.model.building.FileModelSource
 import org.apache.maven.model.building.ModelBuildingRequest
+import org.apache.maven.model.building.ModelSource2
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
@@ -21,8 +23,11 @@ sealed class BomModelResult {
  */
 class BomEffectiveModelResolver(
     private val localRepositoryDir: File,
-    private val onMissingPom: (Gav) -> Unit = {}
+    private val onMissingPom: (Gav) -> Unit = {},
+    private val reactorPoms: (Gav) -> ModelSource2? = { null }
 ) {
+
+    private val modelCache = InMemoryModelCache()
 
     /**
      * Memoizes per resolver instance, which is what makes the cache safe rather than a
@@ -68,15 +73,24 @@ class BomEffectiveModelResolver(
         effectiveModels.computeIfAbsent(bom) { buildEffectiveModelUncached(it) }
 
     private fun buildEffectiveModelUncached(bom: Gav): BomModelResult {
-        val pomFile = bom.pomFileIn(localRepositoryDir)
-        if (!pomFile.isFile) {
-            onMissingPom(bom)
-            return BomModelResult.Failure(bom, "BOM POM not found in local repository: $pomFile")
+        val request = DefaultModelBuildingRequest()
+        val reactorPom = reactorPoms(bom)
+        if (reactorPom != null) {
+            request.setModelSource(reactorPom)
+        } else {
+            val pomFile = bom.pomFileIn(localRepositoryDir)
+            if (!pomFile.isFile) {
+                onMissingPom(bom)
+                return BomModelResult.Failure(bom, "BOM POM not found in local repository: $pomFile")
+            }
+            if (!isReadablePom(FileModelSource(pomFile))) {
+                return BomModelResult.Failure(bom, "Not a POM: $pomFile")
+            }
+            request.setPomFile(pomFile)
         }
 
-        val request = DefaultModelBuildingRequest()
-        request.setPomFile(pomFile)
-        request.setModelResolver(LocalRepositoryModelResolver(localRepositoryDir, onMissingPom))
+        request.setModelResolver(LocalRepositoryModelResolver(localRepositoryDir, onMissingPom, reactorPoms))
+        request.setModelCache(modelCache)
         request.setValidationLevel(ModelBuildingRequest.VALIDATION_LEVEL_MINIMAL)
         request.setProcessPlugins(false)
         // Without this, profile activation that depends on the running JDK

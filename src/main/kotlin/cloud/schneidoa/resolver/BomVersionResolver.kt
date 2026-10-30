@@ -1,5 +1,6 @@
 package cloud.schneidoa.resolver
 
+import org.apache.maven.model.building.ModelSource2
 import java.io.File
 
 sealed class ManagedVersionLookup {
@@ -57,10 +58,11 @@ fun ManagedVersionCatalog.plusUnchecked(additional: List<Gav>): ManagedVersionCa
  */
 class BomVersionResolver(
     val localRepositoryDir: File,
-    val onMissingPom: (Gav) -> Unit = {}
+    val onMissingPom: (Gav) -> Unit = {},
+    val reactorPoms: (Gav) -> ModelSource2? = { null }
 ) {
 
-    private val modelResolver = BomEffectiveModelResolver(localRepositoryDir, onMissingPom)
+    private val modelResolver = BomEffectiveModelResolver(localRepositoryDir, onMissingPom, reactorPoms)
 
     fun resolveManagedVersion(bomsInPrecedenceOrder: List<Gav>, target: Ga): ManagedVersionLookup {
         val unchecked = mutableListOf<Gav>()

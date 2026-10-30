@@ -19,9 +19,12 @@ import com.intellij.openapi.project.Project
  *     missing - which for a broken parent is an artifact already on disk. An on-demand
  *     fetcher would keep re-requesting something it already has and never converge.
  *
- * [maxRounds] is a termination guarantee, not a tuning knob: a newly fetched BOM can reveal
- * nested imports and parents that were not visible before, so rounds could otherwise chain
- * indefinitely. Running out of rounds costs a residual Inconclusive, never a wrong answer.
+ * [maxRounds] is a termination guarantee: a newly fetched BOM can reveal nested imports and
+ * parents that were not visible before, so rounds could otherwise chain indefinitely. Running
+ * out of rounds costs a residual Inconclusive, never a wrong answer. It still has to be deep
+ * enough for real chains, because each level of a parent chain is only discovered by the round
+ * after the one that fetched the level below it. Spring Cloud's BOM alone sits several parents
+ * deep before it reaches its nested imports.
  *
  * Must be called on a background thread: it takes the read lock itself, and [fetcher] does
  * network I/O and a VFS refresh outside it.
@@ -29,15 +32,17 @@ import com.intellij.openapi.project.Project
 fun <T> resolvingMissingPoms(
     project: Project,
     fetcher: (Set<Gav>) -> Set<Gav> = { RemotePomFetcher(project).fetch(it) },
-    maxRounds: Int = 3,
+    maxRounds: Int = 10,
     resolve: (onMissingPom: (Gav) -> Unit) -> T
 ): T {
-    val unfetchable = mutableSetOf<Gav>()
+    // Everything already handed to the fetcher, delivered or not. A coordinate reported again
+    // after it arrived is one that is on disk but unusable, and fetching it again changes nothing.
+    val attempted = mutableSetOf<Gav>()
     var round = 0
 
     while (true) {
         val missing = linkedSetOf<Gav>()
-        val result = ReadAction.compute<T, Throwable> { resolve { missing += it } }
+        val result = ReadAction.computeBlocking<T, Throwable> { resolve { missing += it } }
         round++
 
         // isConcrete filters out coordinates still carrying ${...}: before Maven sync,
@@ -45,11 +50,10 @@ fun <T> resolvingMissingPoms(
         // version arrives as a placeholder. Those are not misses to fetch - and leaving them in
         // would make every round report the same unfetchable coordinate and burn the round
         // budget without ever converging.
-        val toFetch = missing.filter { it.isConcrete() }.toSet() - unfetchable
+        val toFetch = missing.filter { it.isConcrete() }.toSet() - attempted
         if (toFetch.isEmpty() || round >= maxRounds) return result
 
-        val fetched = fetcher(toFetch)
-        if (fetched.isEmpty()) return result
-        unfetchable += toFetch - fetched
+        attempted += toFetch
+        if (fetcher(toFetch).isEmpty()) return result
     }
 }

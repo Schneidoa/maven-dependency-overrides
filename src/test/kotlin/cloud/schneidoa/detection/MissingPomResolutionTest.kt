@@ -52,7 +52,7 @@ class MissingPomResolutionTest : BasePlatformTestCase() {
         assertEquals(1, rounds)
     }
 
-    fun `test does not retry a coordinate that already failed to fetch`() {
+    fun `test asks for a coordinate only once, whether or not it was delivered`() {
         val requested = mutableListOf<Set<Gav>>()
 
         resolvingMissingPoms(
@@ -63,15 +63,14 @@ class MissingPomResolutionTest : BasePlatformTestCase() {
                 request.filter { it == missingB }.toSet()
             }
         ) { onMissing ->
-            // Reports both every round, so the only thing that can shrink the request
-            // is the loop remembering that A is unfetchable.
+            // Reports both every round, so the only thing that can shrink the request is the
+            // loop remembering what it already tried. B being reported again after it arrived
+            // is what a POM that landed on disk but can't be read looks like.
             onMissing(missingA)
             onMissing(missingB)
         }
 
-        assertEquals(2, requested.size)
-        assertEquals(setOf(missingA, missingB), requested[0])
-        assertEquals(setOf(missingB), requested[1])
+        assertEquals(listOf(setOf(missingA, missingB)), requested)
     }
 
     fun `test never asks the fetcher for a coordinate that still contains a property`() {

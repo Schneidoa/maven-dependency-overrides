@@ -8,7 +8,6 @@ import cloud.schneidoa.resolver.ManagedVersionLookup
 import cloud.schneidoa.resolver.plusUnchecked
 import com.intellij.openapi.project.Project
 import org.jetbrains.idea.maven.dom.model.MavenDomProjectModel
-import org.jetbrains.idea.maven.project.MavenProjectsManager
 
 /**
  * Looks up what a module's BOM chain currently manages a given GA at,
@@ -26,8 +25,11 @@ import org.jetbrains.idea.maven.project.MavenProjectsManager
  */
 class ManagedVersionHint(private val bomVersionResolver: BomVersionResolver) {
 
-    private val bomChainResolver =
-        BomChainResolver(bomVersionResolver.localRepositoryDir, bomVersionResolver.onMissingPom)
+    private val bomChainResolver = BomChainResolver(
+        bomVersionResolver.localRepositoryDir,
+        bomVersionResolver.onMissingPom,
+        bomVersionResolver.reactorPoms
+    )
 
     /**
      * [BomChain.truncatedAt] is merged into the answer for the same reason
@@ -39,6 +41,8 @@ class ManagedVersionHint(private val bomVersionResolver: BomVersionResolver) {
      */
     fun lookup(model: MavenDomProjectModel, project: Project, ga: Ga): ManagedVersionLookup {
         val bomChain = bomChainResolver.resolveBomChain(model, project)
+        // First for the same reason as in OverrideDetector: nothing imported can outrank it.
+        bomChain.inherited[ga]?.let { return ManagedVersionLookup.Found(it.version, it.declaredIn, emptyList()) }
         return bomVersionResolver.resolveManagedVersion(bomChain.imports.map { it.bom }, ga)
             .plusUnchecked(bomChain.truncatedAt)
     }
@@ -56,15 +60,14 @@ class ManagedVersionHint(private val bomVersionResolver: BomVersionResolver) {
      */
     fun catalog(model: MavenDomProjectModel, project: Project): ManagedVersionCatalog {
         val bomChain = bomChainResolver.resolveBomChain(model, project)
-        return bomVersionResolver.collectManagedVersions(bomChain.imports.map { it.bom })
+        val imported = bomVersionResolver.collectManagedVersions(bomChain.imports.map { it.bom })
             .plusUnchecked(bomChain.truncatedAt)
+        return imported.copy(versions = bomChain.inherited.mapValues { it.value.version } + imported.versions.filterKeys { it !in bomChain.inherited })
     }
 
     companion object {
         /** Convenience factory for real IDE usage, matching OverrideDetector.forProject. */
-        fun forProject(project: Project, onMissingPom: (Gav) -> Unit = {}): ManagedVersionHint {
-            val localRepositoryDir = MavenProjectsManager.getInstance(project).repositoryPath.toFile()
-            return ManagedVersionHint(BomVersionResolver(localRepositoryDir, onMissingPom))
-        }
+        fun forProject(project: Project, onMissingPom: (Gav) -> Unit = {}): ManagedVersionHint =
+            ManagedVersionHint(bomVersionResolverFor(project, onMissingPom))
     }
 }

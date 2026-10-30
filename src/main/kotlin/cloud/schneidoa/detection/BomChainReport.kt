@@ -1,8 +1,10 @@
 package cloud.schneidoa.detection
 
+import cloud.schneidoa.resolver.BomImport
 import cloud.schneidoa.resolver.BomVersionResolver
 import cloud.schneidoa.resolver.Ga
 import cloud.schneidoa.resolver.Gav
+import cloud.schneidoa.resolver.InheritedManagement
 import cloud.schneidoa.resolver.ManagedVersionLookup
 
 /** One BOM in a module's chain, and what it had to say about a particular artifact. */
@@ -79,12 +81,19 @@ fun buildBomChainReport(
     moduleLabel: String,
     bomChain: List<BomImport>,
     resolver: BomVersionResolver,
-    truncatedAt: List<Gav> = emptyList()
+    truncatedAt: List<Gav> = emptyList(),
+    inherited: InheritedManagement? = null
 ): BomChainReport {
-    var winnerAlreadySeen = false
+    // An ancestor's plain entry outranks every import, so it heads the list as the winner and
+    // the BOMs below it render as what they are: losers. Leaving it out would have the dialog
+    // deny the very Confirmed row that opened it.
+    val inheritedEntry = inherited?.let {
+        BomChainEntry.Manages(it.declaredIn, it.declaredVia, it.version, wins = true)
+    }
+    var winnerAlreadySeen = inherited != null
     var blockedByUnresolvable = false
 
-    val entries = bomChain.map { import ->
+    val importEntries = bomChain.map { import ->
         when (val lookup = resolver.resolveManagedVersion(listOf(import.bom), ga)) {
             is ManagedVersionLookup.Found -> {
                 val isFirstManager = !winnerAlreadySeen
@@ -108,5 +117,5 @@ fun buildBomChainReport(
         }
     }
 
-    return BomChainReport(ga, declaredVersion, moduleLabel, entries, truncatedAt)
+    return BomChainReport(ga, declaredVersion, moduleLabel, listOfNotNull(inheritedEntry) + importEntries, truncatedAt)
 }

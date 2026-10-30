@@ -1,5 +1,6 @@
 package cloud.schneidoa.detection
 
+import cloud.schneidoa.resolver.BomImport
 import cloud.schneidoa.resolver.Gav
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.jetbrains.idea.maven.dom.MavenDomUtil
@@ -44,15 +45,11 @@ class BomChainResolverTest : BasePlatformTestCase() {
     }
 
     /**
-     * Since IDEA 2026.2, `MavenPropertyResolver.resolve` returns its input unchanged
-     * unless `MavenProjectsManager.isInitialized()` - which it is not in a light test
-     * fixture, nor in a real IDE before the first Maven sync finishes. The BOM keeps a
-     * raw `${'$'}{...}` version, which then finds no POM under the local repository, so the
-     * BOM ends up in `uncheckedBoms` and the override is reported Inconclusive rather
-     * than Confirmed. That is the intended failure direction - see
-     * `DependencyManagementScannerTest`'s counterpart test for the same platform change.
+     * A light test fixture is the same state a real IDE is in before the first Maven sync
+     * finishes, when `MavenPropertyResolver.resolve` returns its input unchanged. Interpolation
+     * here comes from Maven's own model builder and needs no sync at all.
      */
-    fun `test leaves a property based BOM version unresolved before Maven sync`() {
+    fun `test resolves a property based BOM version without a Maven sync`() {
         val model = configureModule(
             dependencyManagementEntries = """
             <dependency>
@@ -69,7 +66,7 @@ class BomChainResolverTest : BasePlatformTestCase() {
         val chain = resolver().resolveBomChain(model, project)
 
         assertEquals(
-            listOf(BomImport(Gav("com.example", "acme-bom", "${'$'}{acme.bom.version}"), emptyList())),
+            listOf(BomImport(Gav("com.example", "acme-bom", "1.0.0"), emptyList())),
             chain.imports
         )
     }
@@ -195,11 +192,11 @@ class BomChainResolverTest : BasePlatformTestCase() {
         val childModel = MavenDomUtil.getMavenDomProjectModel(project, childFile.virtualFile)!!
         val chain = resolver().resolveBomChain(childModel, project)
 
+        // The parent's import is gone, not merely outranked: inheritance keys an import by
+        // groupId, artifactId and type, so the child's entry replaces it. Keeping it would let
+        // an artifact only the older BOM manages resolve to a version Maven never sees.
         assertEquals(
-            listOf(
-                BomImport(Gav("com.example", "shared-bom", "2.0.0"), emptyList()),
-                BomImport(Gav("com.example", "shared-bom", "1.0.0"), listOf("parent"))
-            ),
+            listOf(BomImport(Gav("com.example", "shared-bom", "2.0.0"), emptyList())),
             chain.imports
         )
     }
@@ -244,6 +241,7 @@ class BomChainResolverTest : BasePlatformTestCase() {
         val chain = resolver().resolveBomChain(modelA, project)
 
         assertTrue(chain.imports.isEmpty())
+        assertFalse("a cycle is a hierarchy that could not be read", chain.truncatedAt.isEmpty())
     }
 
     fun `test skips file-based parent lookup when relativePath is present but empty, and falls back to repository`() {
@@ -503,7 +501,7 @@ class BomChainResolverTest : BasePlatformTestCase() {
      * whatever the repository fallback found there might be a stale, unrelated
      * previously-installed copy of the same coordinate.
      */
-    fun `test reports a relativePath parent that resolves to a file but yields no model, then still falls back to the repository`() {
+    fun `test reports a relativePath parent that resolves to a file but yields no model instead of using the repository`() {
         myFixture.addFileToProject(
             "parent/pom.xml",
             """
@@ -532,15 +530,11 @@ class BomChainResolverTest : BasePlatformTestCase() {
         val childModel = MavenDomUtil.getMavenDomProjectModel(project, childFile.virtualFile)!!
         val chain = resolver().resolveBomChain(childModel, project)
 
-        // Reported as truncated even though a chain was still found below: the
-        // relativePath copy - the one that would actually be used in a real reactor
-        // build - was broken, so this is not a chain that was fully walked, regardless
-        // of what the repository fallback happened to find under the same coordinate.
+        // The relativePath copy - the one that would actually be used in a real reactor build -
+        // was broken, so this is not a chain that was fully walked, regardless of what the
+        // repository holds under the same coordinate.
         assertEquals(listOf(Gav("com.example", "composing-bom", "1.0.0")), chain.truncatedAt)
-        assertEquals(
-            listOf(BomImport(Gav("com.example", "legacy-bom", "1.0.0"), listOf("composing-bom"))),
-            chain.imports
-        )
+        assertTrue(chain.imports.isEmpty())
     }
 
     private fun resolver(): BomChainResolver {

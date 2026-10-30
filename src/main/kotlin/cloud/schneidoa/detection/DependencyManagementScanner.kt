@@ -12,8 +12,11 @@ object DependencyManagementScanner {
         // MavenDomProjectModel -> MavenDomDependencyManagement -> MavenDomDependencies
         // -> List<MavenDomDependency>; three ".dependencies" in a row is correct,
         // each step unwraps one level of the <dependencyManagement><dependencies>
-        // <dependency> nesting.
-        val managedDependencies: List<MavenDomDependency> = model.dependencyManagement.dependencies.dependencies
+        // <dependency> nesting. Profiles are included whether active or not: an entry in an
+        // inactive profile is still a pin somebody wrote, and it applies the moment the
+        // profile does.
+        val managedDependencies: List<MavenDomDependency> = model.dependencyManagement.dependencies.dependencies +
+            model.profiles.profiles.flatMap { it.dependencyManagement.dependencies.dependencies }
 
         return managedDependencies
             .filter { it.scope.rawText?.trim() != "import" }
