@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+### Changed
+
+- Compatible with IntelliJ IDEA 2026.3 and, from now on, with newer versions as well: the
+  upper version bound is gone, so the plugin no longer becomes unavailable when a new IDE
+  version ships. IntelliJ IDEA 2026.2 remains supported.
+
 ## 0.0.8 - 2026-10-30
 
 ### Changed

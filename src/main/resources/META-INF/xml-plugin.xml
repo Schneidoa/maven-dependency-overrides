@@ -1,0 +1,4 @@
+<!-- Intentionally empty: the optional dependency on com.intellij.xml in plugin.xml exists
+     only to put the XML plugin's classes on this plugin's classpath (IDEA 2026.3+), it
+     registers nothing of its own. -->
+<idea-plugin/>
