@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+## 0.0.9 - 2026-11-06
+
 ### Changed
 
 - Compatible with IntelliJ IDEA 2026.3 and, from now on, with newer versions as well: the
