@@ -76,6 +76,16 @@
 
     <depends>com.intellij.java</depends>
     <depends>org.jetbrains.idea.maven</depends>
+    <!-- XML PSI and DOM (XmlTag, DomElement, XMLLanguage), used throughout detection/.
+         Up to 2026.2 they are part of the platform core and need no dependency. Since
+         2026.3 they live in the bundled "XML and HTML" plugin (com.intellij.xml), which
+         doesn't exist on 2026.2 - so a mandatory dependency would make the plugin
+         unloadable there. Optional is the form valid on both: where the plugin exists,
+         its classes join this plugin's classloader; where it doesn't, the core has them.
+         The alias com.intellij.modules.xml, which exists on both, is no substitute: the
+         Plugin Verifier (1.411) can't resolve it on 2026.3 and reports every XML class
+         as unresolved, which is what the Marketplace review rejects on. -->
+    <depends optional="true" config-file="xml-plugin.xml">com.intellij.xml</depends>
 
     <resource-bundle>messages.MavenOverridesBundle</resource-bundle>
 
